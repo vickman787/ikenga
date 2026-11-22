@@ -20,6 +20,16 @@
  *   - No model ever touches money: models only write words. The price,
  *     the bond and the accept/reject decision stay with the CFO.
  *
+ * Chunked runs (Step 3): one whole report takes ~100s, and the free
+ * hosting plan cuts a request off at 60s. So the run is split into short
+ * stages — Scout, then plan + write, then the numbers check, then the
+ * read-through (and a second read-through if the first one asked for
+ * fixes). Each stage is one request, saves its work, and says which
+ * stage is next. `runReportStage` runs one stage from saved progress;
+ * `runMarketReport` just runs the stages one after another, for the
+ * local command line. A customer's revision re-runs the write and
+ * read-through stages, reusing the pages Scout already read.
+ *
  * The chat and search calls are injectable, so tests can run the whole
  * flow with fakes and never spend a cent or touch the network.
  */
@@ -35,6 +45,26 @@ import { fetchPageText, searchBing, searchWeb, searchWikipedia, type SearchResul
 
 export const REPORT_MODEL_BUDGET_USD = 0.5;
 export const REPORT_MAX_REVISIONS = 1;
+
+/** Stage numbers. 0 means finished — the report is delivered or refused. */
+export const REPORT_STAGE_SCOUT = 1;
+export const REPORT_STAGE_WRITE = 2;
+export const REPORT_STAGE_CHECK = 3;
+export const REPORT_STAGE_AUDIT = 4;
+export const REPORT_STAGE_REAUDIT = 5;
+
+/** Plain-words labels for each stage, for the job page. */
+export const REPORT_STAGE_LABELS: Record<number, string> = {
+  [REPORT_STAGE_SCOUT]: "Scout is looking the market up",
+  [REPORT_STAGE_WRITE]: "Writer is writing the report",
+  [REPORT_STAGE_CHECK]: "Analyst is checking the numbers",
+  [REPORT_STAGE_AUDIT]: "A different model is reading it before it reaches you",
+  [REPORT_STAGE_REAUDIT]: "Reading the revised report again",
+};
+
+export function reportStageLabel(stage: number): string {
+  return REPORT_STAGE_LABELS[stage] ?? "";
+}
 
 export interface ReportStep {
   agent: "Scout" | "Researcher" | "Writer" | "Analyst" | "Auditor";
@@ -62,6 +92,73 @@ export interface MarketReportResult {
   /** Plain-words reason when refused (e.g. budget, no sources, no AI key). */
   reason?: string;
   revisions: number;
+}
+
+/**
+ * Everything a chunked run has done so far, saved after each stage so the
+ * next stage can pick it up — even on another server. `stage` is the next
+ * stage to run; 0 means the report is delivered or refused.
+ */
+export interface ReportProgress {
+  stage: number;
+  brief: string;
+  revisionNote?: string;
+  pages: SourcePage[];
+  plan: string;
+  report: string;
+  checkText: string;
+  steps: ReportStep[];
+  sources: ReportSource[];
+  totalTokens: number;
+  totalCostUsd: number;
+  revisions: number;
+  status: "in-progress" | "delivered" | "refused";
+  reason?: string;
+  deliveredAt: string;
+}
+
+export function emptyReportProgress(brief: string, revisionNote?: string): ReportProgress {
+  return {
+    stage: REPORT_STAGE_SCOUT,
+    brief: brief.trim(),
+    revisionNote,
+    pages: [],
+    plan: "",
+    report: "",
+    checkText: "",
+    steps: [],
+    sources: [],
+    totalTokens: 0,
+    totalCostUsd: 0,
+    revisions: 0,
+    status: "in-progress",
+    deliveredAt: "",
+  };
+}
+
+/** A revision starts again at the writing stage, reusing Scout's pages. */
+export function revisionProgress(previous: ReportProgress, revisionNote: string): ReportProgress {
+  return {
+    ...emptyReportProgress(previous.brief, revisionNote),
+    stage: REPORT_STAGE_WRITE,
+    pages: previous.pages,
+    sources: previous.sources,
+    // The old report stays on the page until the new one is written.
+    report: previous.report,
+  };
+}
+
+export function progressToResult(p: ReportProgress): MarketReportResult {
+  return {
+    report: p.status === "delivered" ? p.report : "",
+    sources: p.sources,
+    steps: p.steps,
+    totalTokens: p.totalTokens,
+    totalCostUsd: p.totalCostUsd,
+    status: p.status === "delivered" ? "delivered" : "refused",
+    reason: p.reason,
+    revisions: p.revisions,
+  };
 }
 
 export interface RunReportDeps {
@@ -94,11 +191,28 @@ function stripCodeFences(text: string): string {
   return text.replace(/^```[a-z]*\n?/gim, "").replace(/```$/gm, "").trim();
 }
 
-export async function runMarketReport(input: RunReportInput, deps: RunReportDeps = {}): Promise<MarketReportResult> {
-  const brief = input.brief.trim();
+function auditPrompt(report: string, checkText: string, sourceText: string): string {
+  return `You are Auditor, reading a market report before it reaches the customer. You are a different model from the one that wrote it.\n\nThe report:\n${report}\n\nThe numbers check:\n${checkText}\n\nThe sources:\n${sourceText}\n\nAnswer with exactly one line first: PASS or FIX. Then, if FIX, say in plain words what is wrong and what must change. Only judge it against the sources — a fact that is in the sources is fine, a fact that is not is a problem.`;
+}
+
+/**
+ * Run ONE stage of a market report from saved progress, and return the
+ * updated progress (saved by the caller after each stage). A stage is
+ * short — at most two model calls — so it fits in a 60s request.
+ */
+export async function runReportStage(progress: ReportProgress, deps: RunReportDeps = {}): Promise<ReportProgress> {
+  const brief = progress.brief.trim();
+  const p: ReportProgress = {
+    ...progress,
+    steps: [...progress.steps],
+    pages: [...progress.pages],
+    sources: [...progress.sources],
+  };
   if (!brief) {
-    return { report: "", sources: [], steps: [], totalTokens: 0, totalCostUsd: 0, status: "refused", reason: "There was no brief to work from.", revisions: 0 };
+    return { ...p, stage: 0, status: "refused", reason: "There was no brief to work from." };
   }
+  if (p.status !== "in-progress" || p.stage === 0) return p;
+
   const rawChat = deps.chat ?? (async (c) => chatFortyTwo(c));
   /** One chat call; if the model answers with nothing (its thinking ate
    * the token budget), try once more with twice the budget. */
@@ -112,161 +226,196 @@ export async function runMarketReport(input: RunReportInput, deps: RunReportDeps
   const wiki = deps.wiki ?? searchWikipedia;
   const fetchPage = deps.fetchPage ?? fetchPageText;
 
-  const steps: ReportStep[] = [];
-  let totalTokens = 0;
-  let totalCostUsd = 0;
-
   const charge = (reply: FortyTwoReply, agent: ReportStep["agent"], what: string) => {
-    totalTokens += reply.usage.totalTokens;
-    totalCostUsd = Math.round((totalCostUsd + reply.costUsd) * 1_000_000) / 1_000_000;
-    steps.push({ agent, what, detail: "", model: reply.model, tokens: reply.usage.totalTokens, costUsd: reply.costUsd });
+    p.totalTokens += reply.usage.totalTokens;
+    p.totalCostUsd = Math.round((p.totalCostUsd + reply.costUsd) * 1_000_000) / 1_000_000;
+    p.steps.push({ agent, what, detail: "", model: reply.model, tokens: reply.usage.totalTokens, costUsd: reply.costUsd });
   };
 
   /** Refuse instead of overspending: check the worst case before each call. */
   const withinBudget = (model: string, prompt: string, maxTokens: number): boolean =>
-    totalCostUsd + worstCaseCostUsd(model, approxTokens(prompt), maxTokens) <= REPORT_MODEL_BUDGET_USD;
+    p.totalCostUsd + worstCaseCostUsd(model, approxTokens(prompt), maxTokens) <= REPORT_MODEL_BUDGET_USD;
 
   /** Already spent too much (a call cost more than its worst case) — stop now. */
-  const overBudget = (): boolean => totalCostUsd > REPORT_MODEL_BUDGET_USD;
+  const overBudget = (): boolean => p.totalCostUsd > REPORT_MODEL_BUDGET_USD;
 
-  const refuse = (reason: string): MarketReportResult => ({
-    report: "", sources: [], steps, totalTokens, totalCostUsd, status: "refused", reason, revisions: 0,
+  const refuse = (reason: string): ReportProgress => ({
+    ...p, report: "", stage: 0, status: "refused", reason, deliveredAt: new Date().toISOString(),
+  });
+  const deliver = (): ReportProgress => ({
+    ...p, stage: 0, status: "delivered", deliveredAt: new Date().toISOString(),
   });
 
-  // --- Scout: search, then read the pages. ---
-  // A long brief returns nothing from Wikipedia and little from the web,
-  // so Scout also tries the names inside it: the part after a colon
-  // ("Paystack, Flutterwave and Moniepoint") and the capitalised words.
-  const afterColon = brief.includes(":") ? brief.split(":").slice(1).join(":").trim() : "";
-  // Capitalised words after the first word of the brief (the first word is
-  // capitalised just for starting the sentence — it is not a name).
-  const named = [...new Set(brief.split(/\s+/).slice(1).filter((w) => /^[A-Z][a-zA-Z]{2,}$/.test(w.replace(/[^a-zA-Z]/g, ""))))].join(" ");
-  const keywords = [afterColon, named].map((s) => s.replace(/[^a-zA-Z0-9 ,&]/g, "").trim()).filter(Boolean);
-  const mainTopic = keywords[0] ?? brief;
-  let pages: SourcePage[] = deps.existingSources ?? [];
-  let webResults: SearchResult[] = [];
-  if (pages.length === 0) {
-    const queries = [...new Set([mainTopic, `${mainTopic} Nigeria`, `${mainTopic} fees`, `${mainTopic} vs`])];
-    for (const q of queries) {
-      // Bing first (reliable), DuckDuckGo as a backup.
-      for (const fn of [searchBingFn, search]) {
-        try {
-          const found = await fn(q, 5);
-          for (const r of found) if (!webResults.some((x) => x.url === r.url)) webResults.push(r);
-          if (webResults.length >= 8) break;
-        } catch {
-          // One failed search never stops the report — Scout tries the next one.
+  // --- Stage 1, Scout: search, then read the pages. ---
+  if (p.stage === REPORT_STAGE_SCOUT) {
+    // A long brief returns nothing from Wikipedia and little from the web,
+    // so Scout also tries the names inside it: the part after a colon
+    // ("Paystack, Flutterwave and Moniepoint") and the capitalised words.
+    const afterColon = brief.includes(":") ? brief.split(":").slice(1).join(":").trim() : "";
+    // Capitalised words after the first word of the brief (the first word is
+    // capitalised just for starting the sentence — it is not a name).
+    const named = [...new Set(brief.split(/\s+/).slice(1).filter((w) => /^[A-Z][a-zA-Z]{2,}$/.test(w.replace(/[^a-zA-Z]/g, ""))))].join(" ");
+    const keywords = [afterColon, named].map((s) => s.replace(/[^a-zA-Z0-9 ,&]/g, "").trim()).filter(Boolean);
+    const mainTopic = keywords[0] ?? brief;
+    const pages: SourcePage[] = [...p.pages];
+    let webResults: SearchResult[] = [];
+    if (pages.length === 0) {
+      const queries = [...new Set([mainTopic, `${mainTopic} Nigeria`, `${mainTopic} fees`, `${mainTopic} vs`])];
+      for (const q of queries) {
+        // Bing first (reliable), DuckDuckGo as a backup.
+        for (const fn of [searchBingFn, search]) {
+          try {
+            const found = await fn(q, 5);
+            for (const r of found) if (!webResults.some((x) => x.url === r.url)) webResults.push(r);
+            if (webResults.length >= 8) break;
+          } catch {
+            // One failed search never stops the report — Scout tries the next one.
+          }
         }
+        if (webResults.length >= 8) break;
       }
-      if (webResults.length >= 8) break;
+      // Wikipedia wants one name at a time — "Paystack, Flutterwave" finds
+      // nothing, "Paystack" finds the page. Try the first three named terms.
+      const wikiTerms = mainTopic.split(/[,，&]| and /).map((s) => s.replace(/[^a-zA-Z0-9 ]/g, "").trim()).filter((s) => s.length > 2).slice(0, 3);
+      for (const term of wikiTerms.length > 0 ? wikiTerms : [brief]) {
+        const found = await wiki(term, 1).catch(() => [] as SourcePage[]);
+        for (const pp of found) if (!pages.some((x) => x.url === pp.url)) pages.push(pp);
+      }
+      // Read the web results, but only keep pages that actually mention
+      // what the customer asked about — a page that matches the word
+      // "compare" and nothing else is not a source for this report. A page
+      // passes if it mentions any named business or any content word.
+      const mustMention = [
+        ...wikiTerms,
+        ...brief.split(/\s+/).filter((w) => w.length > 4).slice(0, 6),
+      ].map((w) => w.replace(/[^a-zA-Z0-9 ]/g, "").trim()).filter((w) => w.length > 2);
+      const mentionsTopic = (text: string) => {
+        const lower = text.toLowerCase();
+        return mustMention.some((t) => lower.includes(t.toLowerCase()));
+      };
+      for (const r of webResults) {
+        if (pages.length >= 6) break;
+        const page = await fetchPage(r.url);
+        if (!page) continue;
+        if (!mentionsTopic(page.text) && !mentionsTopic(r.title)) continue;
+        if (pages.some((pp) => pp.url === page.url)) continue;
+        pages.push({ title: r.title, url: page.url, text: page.text });
+      }
     }
-    // Wikipedia wants one name at a time — "Paystack, Flutterwave" finds
-    // nothing, "Paystack" finds the page. Try the first three named terms.
-    const wikiTerms = mainTopic.split(/[,，&]| and /).map((s) => s.replace(/[^a-zA-Z0-9 ]/g, "").trim()).filter((s) => s.length > 2).slice(0, 3);
-    for (const term of wikiTerms.length > 0 ? wikiTerms : [brief]) {
-      const found = await wiki(term, 1).catch(() => [] as SourcePage[]);
-      for (const p of found) if (!pages.some((x) => x.url === p.url)) pages.push(p);
+    p.pages = pages;
+    p.sources = pages.map((pg) => ({ title: pg.title, url: pg.url }));
+    p.steps.push({
+      agent: "Scout",
+      what: `Looked up "${brief}" and read ${pages.length} ${pages.length === 1 ? "page" : "pages"}.`,
+      detail: pages.length > 0 ? `Sources: ${p.sources.map((s) => s.title).join("; ")}` : "Nothing readable came back — so there is no report to write from.",
+    });
+    if (pages.length === 0) {
+      return refuse("Scout could not find anything readable about this — so there is no report to write from. Try a clearer brief, with the business or market named.");
     }
-    // Read the web results, but only keep pages that actually mention
-    // what the customer asked about — a page that matches the word
-    // "compare" and nothing else is not a source for this report.
-    // Read the web results, but only keep pages that actually mention
-    // what the customer asked about — a page that matches the word
-    // "compare" and nothing else is not a source for this report. A page
-    // passes if it mentions any named business or any content word.
-    const mustMention = [
-      ...wikiTerms,
-      ...brief.split(/\s+/).filter((w) => w.length > 4).slice(0, 6),
-    ].map((w) => w.replace(/[^a-zA-Z0-9 ]/g, "").trim()).filter((w) => w.length > 2);
-    const mentionsTopic = (text: string) => {
-      const lower = text.toLowerCase();
-      return mustMention.some((t) => lower.includes(t.toLowerCase()));
-    };
-    for (const r of webResults) {
-      if (pages.length >= 6) break;
-      const page = await fetchPage(r.url);
-      if (!page) continue;
-      if (!mentionsTopic(page.text) && !mentionsTopic(r.title)) continue;
-      if (pages.some((p) => p.url === page.url)) continue;
-      pages.push({ title: r.title, url: page.url, text: page.text });
-    }
+    return { ...p, stage: REPORT_STAGE_WRITE };
   }
-  const sources: ReportSource[] = pages.map((p) => ({ title: p.title, url: p.url }));
-  steps.push({
-    agent: "Scout",
-    what: `Looked up "${brief}" and read ${pages.length} ${pages.length === 1 ? "page" : "pages"}.`,
-    detail: pages.length > 0 ? `Sources: ${sources.map((s) => s.title).join("; ")}` : "Nothing readable came back — so there is no report to write from.",
-  });
-  if (pages.length === 0) {
-    return refuse("Scout could not find anything readable about this — so there is no report to write from. Try a clearer brief, with the business or market named.");
-  }
-  const sourceText = sourcesText(pages);
 
-  // --- Researcher: a short plan from the brief + sources. ---
-  const planPrompt = `You are Researcher, planning a short market report for a small business owner in Nigeria.\n\nThe job: ${brief}\n\nWhat Scout found (only use facts from here):\n${sourceText}\n\nWrite a short plan: the businesses or options to compare, the prices or facts worth checking, and what the customer should take away. Keep it under 200 words. Only use facts from the sources above — do not invent any business, price or number.`;
-  if (!withinBudget(FORTYTWO_MODEL_WORK, planPrompt, 600)) {
-    return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
-  }
-  const plan = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: planPrompt }], maxTokens: 1000, reasoningEffort: "low" });
-  charge(plan, "Researcher", "Turned the brief and what Scout found into a short plan.");
-  if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
-  steps[steps.length - 1].detail = stripCodeFences(plan.text).slice(0, 400);
+  const sourceText = sourcesText(p.pages);
 
-  // --- Writer: the report itself. ---
-  const writePrompt = `You are Writer, writing a market report for a small business owner in Nigeria. Write in plain, warm, human words — no jargon, no filler. Write the report ENTIRELY in your own words.\n\nThe job: ${brief}\n${deps.revisionNote ? `The customer asked for a change: ${deps.revisionNote}\n` : ""}\nThe plan:\n${stripCodeFences(plan.text)}\n\n--- SOURCES (fact-checking only — do NOT copy, paste or quote them) ---\n${sourceText}\n--- END OF SOURCES ---\n\nWrite the report as markdown with these parts:\n- A short summary (2–3 sentences): what you found, in plain words.\n- The businesses or options found, each with what they do and any price you actually found. If a price was not in the sources, write "price not listed" — never guess a price.\n- What it means for the customer: which option fits what kind of business, and why.\n- Things to watch out for: anything the sources disagree on, or that could not be checked.\n- Sources: list them by number and title with their link, exactly as given above.\n\nRules: under 800 words. Every fact must come from the sources above — do not invent any business, price, number or fact. If something is not in the sources, say so. Never paste the source text into the report.`;
-  if (!withinBudget(FORTYTWO_MODEL_WORK, writePrompt, 1800)) {
-    return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
-  }
-  const draft = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: writePrompt }], maxTokens: 1800 });
-  charge(draft, "Writer", "Wrote the report from the plan and the sources.");
-  if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
-  steps[steps.length - 1].detail = `About ${draft.text.split(/\s+/).length} words, from ${pages.length} sources.`;
-  let report = stripCodeFences(draft.text);
-
-  // --- Analyst: check every number against the sources. ---
-  const checkPrompt = `You are Analyst, checking a market report against its sources.\n\nThe report:\n${report}\n\nThe sources:\n${sourceText}\n\nList every number, price and date in the report, and for each one say whether it appears in the sources or not. End with one line: either "ALL NUMBERS CHECK OUT" or "PROBLEMS:" followed by the list of numbers that could not be checked. Do not add new facts.`;
-  if (!withinBudget(FORTYTWO_MODEL_WORK, checkPrompt, 800)) {
-    return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
-  }
-  const check = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], maxTokens: 2000, reasoningEffort: "low" });
-  charge(check, "Analyst", "Checked every number, price and date against the sources.");
-  if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
-  steps[steps.length - 1].detail = stripCodeFences(check.text).slice(-300);
-
-  // --- Auditor: a different model reads it and says pass or fix. ---
-  let revisions = 0;
-  for (let attempt = 0; attempt <= REPORT_MAX_REVISIONS; attempt++) {
-    const auditPrompt = `You are Auditor, reading a market report before it reaches the customer. You are a different model from the one that wrote it.\n\nThe report:\n${report}\n\nThe numbers check:\n${stripCodeFences(check.text)}\n\nThe sources:\n${sourceText}\n\nAnswer with exactly one line first: PASS or FIX. Then, if FIX, say in plain words what is wrong and what must change. Only judge it against the sources — a fact that is in the sources is fine, a fact that is not is a problem.`;
-    if (!withinBudget(FORTYTWO_MODEL_AUDIT, auditPrompt, 600)) {
+  // --- Stage 2, Researcher + Writer: a short plan, then the report. ---
+  if (p.stage === REPORT_STAGE_WRITE) {
+    const planPrompt = `You are Researcher, planning a short market report for a small business owner in Nigeria.\n\nThe job: ${brief}\n\nWhat Scout found (only use facts from here):\n${sourceText}\n\nWrite a short plan: the businesses or options to compare, the prices or facts worth checking, and what the customer should take away. Keep it under 200 words. Only use facts from the sources above — do not invent any business, price or number.`;
+    if (!withinBudget(FORTYTWO_MODEL_WORK, planPrompt, 600)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const audit = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: auditPrompt }], maxTokens: 1500, reasoningEffort: "low" });
-    charge(audit, "Auditor", attempt === 0 ? "Read the report on a different model, before it reaches you." : "Read the revised report again.");
+    const plan = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: planPrompt }], maxTokens: 1000, reasoningEffort: "low" });
+    charge(plan, "Researcher", "Turned the brief and what Scout found into a short plan.");
+    if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
+    p.plan = stripCodeFences(plan.text);
+    p.steps[p.steps.length - 1].detail = p.plan.slice(0, 400);
+
+    const writePrompt = `You are Writer, writing a market report for a small business owner in Nigeria. Write in plain, warm, human words — no jargon, no filler. Write the report ENTIRELY in your own words.\n\nThe job: ${brief}\n${p.revisionNote ? `The customer asked for a change: ${p.revisionNote}\n` : ""}\nThe plan:\n${p.plan}\n\n--- SOURCES (fact-checking only — do NOT copy, paste or quote them) ---\n${sourceText}\n--- END OF SOURCES ---\n\nWrite the report as markdown with these parts:\n- A short summary (2–3 sentences): what you found, in plain words.\n- The businesses or options found, each with what they do and any price you actually found. If a price was not in the sources, write "price not listed" — never guess a price.\n- What it means for the customer: which option fits what kind of business, and why.\n- Things to watch out for: anything the sources disagree on, or that could not be checked.\n- Sources: list them by number and title with their link, exactly as given above.\n\nRules: under 800 words. Every fact must come from the sources above — do not invent any business, price, number or fact. If something is not in the sources, say so. Never paste the source text into the report.`;
+    if (!withinBudget(FORTYTWO_MODEL_WORK, writePrompt, 1800)) {
+      return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
+    }
+    const draft = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: writePrompt }], maxTokens: 1800 });
+    charge(draft, "Writer", "Wrote the report from the plan and the sources.");
+    if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
+    p.steps[p.steps.length - 1].detail = `About ${draft.text.split(/\s+/).length} words, from ${p.pages.length} sources.`;
+    p.report = stripCodeFences(draft.text);
+    return { ...p, stage: REPORT_STAGE_CHECK };
+  }
+
+  // --- Stage 3, Analyst: check every number against the sources. ---
+  if (p.stage === REPORT_STAGE_CHECK) {
+    const checkPrompt = `You are Analyst, checking a market report against its sources.\n\nThe report:\n${p.report}\n\nThe sources:\n${sourceText}\n\nList every number, price and date in the report, and for each one say whether it appears in the sources or not. End with one line: either "ALL NUMBERS CHECK OUT" or "PROBLEMS:" followed by the list of numbers that could not be checked. Do not add new facts.`;
+    if (!withinBudget(FORTYTWO_MODEL_WORK, checkPrompt, 800)) {
+      return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
+    }
+    const check = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], maxTokens: 2000, reasoningEffort: "low" });
+    charge(check, "Analyst", "Checked every number, price and date against the sources.");
+    if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
+    p.checkText = stripCodeFences(check.text);
+    p.steps[p.steps.length - 1].detail = p.checkText.slice(-300);
+    return { ...p, stage: REPORT_STAGE_AUDIT };
+  }
+
+  // --- Stages 4 and 5, Auditor: a different model reads it and says pass or fix. ---
+  if (p.stage === REPORT_STAGE_AUDIT || p.stage === REPORT_STAGE_REAUDIT) {
+    const isReaudit = p.stage === REPORT_STAGE_REAUDIT;
+    const prompt = auditPrompt(p.report, p.checkText, sourceText);
+    if (!withinBudget(FORTYTWO_MODEL_AUDIT, prompt, 600)) {
+      return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
+    }
+    const audit = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 1500, reasoningEffort: "low" });
+    charge(audit, "Auditor", isReaudit ? "Read the revised report again." : "Read the report on a different model, before it reaches you.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     const auditText = stripCodeFences(audit.text);
-    steps[steps.length - 1].detail = auditText.slice(0, 400);
+    p.steps[p.steps.length - 1].detail = auditText.slice(0, 400);
     // The Auditor may answer "**PASS**" or "PASS — ..." — strip any leading
     // markdown/punctuation before reading the verdict.
     const verdict = auditText.replace(/^[^A-Za-z]+/, "");
     if (/^PASS\b/i.test(verdict)) {
-      return { report, sources, steps, totalTokens, totalCostUsd, status: "delivered", revisions };
+      return deliver();
     }
-    if (attempt === REPORT_MAX_REVISIONS) {
+    if (isReaudit) {
       // One revision was already used. Ship it, but say so plainly.
-      steps.push({ agent: "Auditor", what: "Still had notes after one revision — the report is shown with them.", detail: auditText.slice(0, 400) });
-      return { report, sources, steps, totalTokens, totalCostUsd, status: "delivered", revisions };
+      p.steps.push({ agent: "Auditor", what: "Still had notes after one revision — the report is shown with them.", detail: auditText.slice(0, 400) });
+      return deliver();
     }
     // One free revision: Writer fixes what the Auditor flagged.
-    const fixPrompt = `You are Writer. The Auditor read your report and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe report:\n${report}\n\nThe sources (only use facts from here):\n${sourceText}\n\nReturn the full corrected report as markdown, same shape as before. Do not invent any fact.`;
+    const fixPrompt = `You are Writer. The Auditor read your report and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe report:\n${p.report}\n\nThe sources (only use facts from here):\n${sourceText}\n\nReturn the full corrected report as markdown, same shape as before. Do not invent any fact.`;
     if (!withinBudget(FORTYTWO_MODEL_WORK, fixPrompt, 1800)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
     const fixed = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: 1800 });
     charge(fixed, "Writer", "Revised the report once, fixing what the Auditor flagged.");
-    steps[steps.length - 1].detail = `Revised to about ${stripCodeFences(fixed.text).split(/\s+/).length} words.`;
+    p.steps[p.steps.length - 1].detail = `Revised to about ${stripCodeFences(fixed.text).split(/\s+/).length} words.`;
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
-    report = stripCodeFences(fixed.text);
-    revisions += 1;
+    p.report = stripCodeFences(fixed.text);
+    p.revisions += 1;
+    return { ...p, stage: REPORT_STAGE_REAUDIT };
   }
-  return { report, sources, steps, totalTokens, totalCostUsd, status: "delivered", revisions };
+
+  return p;
+}
+
+/** Run the whole report, one stage at a time (the local command line). */
+export async function runMarketReport(input: RunReportInput, deps: RunReportDeps = {}): Promise<MarketReportResult> {
+  const brief = input.brief.trim();
+  if (!brief) {
+    return { report: "", sources: [], steps: [], totalTokens: 0, totalCostUsd: 0, status: "refused", reason: "There was no brief to work from.", revisions: 0 };
+  }
+  let progress = emptyReportProgress(brief, deps.revisionNote);
+  if (deps.existingSources && deps.existingSources.length > 0) {
+    // A revision reuses the pages Scout already read — no new search, but
+    // the Scout step still shows what was read.
+    progress.pages = deps.existingSources;
+    progress.sources = progress.pages.map((pg) => ({ title: pg.title, url: pg.url }));
+    progress.steps.push({
+      agent: "Scout",
+      what: `Looked up "${brief}" and read ${progress.pages.length} ${progress.pages.length === 1 ? "page" : "pages"}.`,
+      detail: `Sources: ${progress.sources.map((s) => s.title).join("; ")}`,
+    });
+    progress.stage = REPORT_STAGE_WRITE;
+  }
+  while (progress.status === "in-progress" && progress.stage !== 0) {
+    progress = await runReportStage(progress, deps);
+  }
+  return progressToResult(progress);
 }

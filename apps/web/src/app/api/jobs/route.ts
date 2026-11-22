@@ -3,10 +3,10 @@ import { createHire, ledgerBackend, listHires } from "@/lib/jobs";
 
 export async function GET() {
   return NextResponse.json({
-    jobs: listHires(),
+    jobs: await listHires(),
     backend: ledgerBackend(),
     demo: ledgerBackend() === "memory",
-    note: "Step 2: Postgres ledger when DATABASE_URL is set, otherwise in-memory. No money moves in this route.",
+    note: "Step 3: hires live in Postgres when DATABASE_URL is set, otherwise in memory. No money moves in this route.",
   });
 }
 

@@ -12,7 +12,7 @@ import { getHire, getLedger, setHireStatus } from "@/lib/jobs";
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const hire = getHire(id);
+  const hire = await getHire(id);
   if (!hire) return NextResponse.json({ error: "Job not found" }, { status: 404 });
   const body = (await req.json().catch(() => ({}))) as { action?: string };
   if (body.action !== "accept" && body.action !== "reject") {
@@ -20,7 +20,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   const ledger = await getLedger();
   if (body.action === "accept") {
-    setHireStatus(id, "accepted");
+    await setHireStatus(id, "accepted");
     await ledger.appendDecision({
       id: `dec_${id}_accept_${Date.now()}`,
       orderId: id,
@@ -31,7 +31,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       entry: `accept|Customer accepted the work.|${hire.priceUsdc * 1_000_000}`,
     });
   } else {
-    setHireStatus(id, "refunded");
+    await setHireStatus(id, "refunded");
     await ledger.appendDecision({
       id: `dec_${id}_reject_${Date.now()}`,
       orderId: id,
@@ -42,5 +42,5 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       entry: `reject|Customer turned the work down.|${hire.priceUsdc * 1_000_000}`,
     });
   }
-  return NextResponse.json({ job: getHire(id) });
+  return NextResponse.json({ job: await getHire(id) });
 }

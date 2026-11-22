@@ -36,7 +36,34 @@ export interface LedgerOrder {
   description: string;
   status: string;
   priceMicroUsdc: number;
+  /** Bond the CFO puts up (micro-USDC). Defaults to 100000 ($0.10) for old rows. */
+  bondMicroUsdc?: number;
+  cfoAccepted?: boolean;
+  cfoReason?: string;
+  decisionHash?: string;
   createdAt: string;
+}
+
+/** The delivered work for a job, plus — while it is running — the stage
+ * state the next chunked step needs to pick up where the last one stopped.
+ * Stored as one JSON document in the deliveries table (and in memory for
+ * the MemoryLedger). `stage` is the next stage to run; 0 means finished. */
+export interface StoredReportData {
+  report: string;
+  sources: { title: string; url: string }[];
+  steps: { agent: "Scout" | "Researcher" | "Writer" | "Analyst" | "Auditor"; what: string; detail: string; model?: string; tokens?: number; costUsd?: number }[];
+  totalTokens: number;
+  totalCostUsd: number;
+  status: "delivered" | "refused" | "in-progress";
+  reason?: string;
+  revisions: number;
+  deliveredAt: string;
+  stage: number;
+  /** Pages Scout read (kept so later stages — and a revision — reuse them). */
+  pages?: { title: string; url: string; text: string }[];
+  plan?: string;
+  checkText?: string;
+  revisionNote?: string;
 }
 
 export interface LedgerDecision {
@@ -110,6 +137,12 @@ export interface Ledger {
   createOrder(order: Omit<LedgerOrder, "createdAt" | "priceMicroUsdc"> & { priceMicroUsdc?: number }): Promise<LedgerOrder>;
   getOrder(id: string): Promise<LedgerOrder | null>;
   listOrders(): Promise<LedgerOrder[]>;
+  /** Change an order's status (accept / reject / in-progress / delivered). */
+  updateOrderStatus(id: string, status: string): Promise<LedgerOrder | null>;
+  /** Save the delivered work (or the in-progress report state) for an order. */
+  saveReport(orderId: string, report: StoredReportData): Promise<StoredReportData>;
+  /** Read it back; null when nothing has been delivered or started yet. */
+  getReport(orderId: string): Promise<StoredReportData | null>;
   appendDecision(d: Omit<LedgerDecision, "prevHash" | "hash" | "createdAt"> & { entry: string }): Promise<LedgerDecision>;
   listDecisions(orderId: string): Promise<LedgerDecision[]>;
   /** Verify the hash chain for one order. True when the chain is intact. */
@@ -131,6 +164,7 @@ export class MemoryLedger implements Ledger {
   private fxSwaps = new Map<string, FxSwapRecord[]>();
   private selfVerifications: SelfVerificationRecord[] = [];
   private x402Payments = new Map<string, X402PaymentRecord[]>();
+  private reports = new Map<string, StoredReportData>();
 
   async createOrder(order: Omit<LedgerOrder, "createdAt" | "priceMicroUsdc"> & { priceMicroUsdc?: number }): Promise<LedgerOrder> {
     const full: LedgerOrder = {
@@ -148,6 +182,22 @@ export class MemoryLedger implements Ledger {
 
   async listOrders(): Promise<LedgerOrder[]> {
     return [...this.orders.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async updateOrderStatus(id: string, status: string): Promise<LedgerOrder | null> {
+    const order = this.orders.get(id);
+    if (!order) return null;
+    order.status = status;
+    return order;
+  }
+
+  async saveReport(orderId: string, report: StoredReportData): Promise<StoredReportData> {
+    this.reports.set(orderId, report);
+    return report;
+  }
+
+  async getReport(orderId: string): Promise<StoredReportData | null> {
+    return this.reports.get(orderId) ?? null;
   }
 
   async appendDecision(d: Omit<LedgerDecision, "prevHash" | "hash" | "createdAt"> & { entry: string }): Promise<LedgerDecision> {
@@ -227,16 +277,17 @@ export class PostgresLedger implements Ledger {
 
   async createOrder(order: Omit<LedgerOrder, "createdAt" | "priceMicroUsdc"> & { priceMicroUsdc?: number }): Promise<LedgerOrder> {
     const { rows } = await this.pool.query(
-      `INSERT INTO orders (id, job_type, customer_wallet, description, status, price_micro_usdc)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, job_type, customer_wallet, description, status, price_micro_usdc, created_at`,
-      [order.id, order.jobType, order.customerWallet, order.description, order.status, order.priceMicroUsdc ?? 1_000_000],
+      `INSERT INTO orders (id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, created_at`,
+      [order.id, order.jobType, order.customerWallet, order.description, order.status, order.priceMicroUsdc ?? 1_000_000,
+       order.bondMicroUsdc ?? 100_000, order.cfoAccepted ?? true, order.cfoReason ?? "", order.decisionHash ?? ""],
     );
     return rowToOrder(rows[0]);
   }
 
   async getOrder(id: string): Promise<LedgerOrder | null> {
     const { rows } = await this.pool.query(
-      `SELECT id, job_type, customer_wallet, description, status, price_micro_usdc, created_at FROM orders WHERE id = $1`,
+      `SELECT id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, created_at FROM orders WHERE id = $1`,
       [id],
     );
     return rows.length === 0 ? null : rowToOrder(rows[0]);
@@ -244,9 +295,38 @@ export class PostgresLedger implements Ledger {
 
   async listOrders(): Promise<LedgerOrder[]> {
     const { rows } = await this.pool.query(
-      `SELECT id, job_type, customer_wallet, description, status, price_micro_usdc, created_at FROM orders ORDER BY created_at ASC`,
+      `SELECT id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, created_at FROM orders ORDER BY created_at ASC`,
     );
     return rows.map(rowToOrder);
+  }
+
+  async updateOrderStatus(id: string, status: string): Promise<LedgerOrder | null> {
+    const { rows } = await this.pool.query(
+      `UPDATE orders SET status = $2 WHERE id = $1
+       RETURNING id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, created_at`,
+      [id, status],
+    );
+    return rows.length === 0 ? null : rowToOrder(rows[0]);
+  }
+
+  async saveReport(orderId: string, report: StoredReportData): Promise<StoredReportData> {
+    await this.pool.query(
+      `INSERT INTO deliveries (order_id, status, stage, data, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, now())
+       ON CONFLICT (order_id) DO UPDATE SET status = EXCLUDED.status, stage = EXCLUDED.stage, data = EXCLUDED.data, updated_at = now()`,
+      [orderId, report.status, report.stage, JSON.stringify(report)],
+    );
+    return report;
+  }
+
+  async getReport(orderId: string): Promise<StoredReportData | null> {
+    const { rows } = await this.pool.query(
+      `SELECT data FROM deliveries WHERE order_id = $1`,
+      [orderId],
+    );
+    if (rows.length === 0) return null;
+    const data = rows[0].data;
+    return (typeof data === "string" ? JSON.parse(data) : data) as StoredReportData;
   }
 
   async appendDecision(d: Omit<LedgerDecision, "prevHash" | "hash" | "createdAt"> & { entry: string }): Promise<LedgerDecision> {
@@ -374,6 +454,10 @@ function rowToOrder(r: Record<string, unknown>): LedgerOrder {
     description: String(r.description),
     status: String(r.status),
     priceMicroUsdc: Number(r.price_micro_usdc),
+    bondMicroUsdc: r.bond_micro_usdc === null || r.bond_micro_usdc === undefined ? undefined : Number(r.bond_micro_usdc),
+    cfoAccepted: r.cfo_accepted === null || r.cfo_accepted === undefined ? undefined : Boolean(r.cfo_accepted),
+    cfoReason: r.cfo_reason === null || r.cfo_reason === undefined ? undefined : String(r.cfo_reason),
+    decisionHash: r.decision_hash === null || r.decision_hash === undefined ? undefined : String(r.decision_hash),
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   };
 }

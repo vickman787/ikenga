@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { JOB_LABELS, type JobType } from "@ikenga/shared";
 
@@ -31,11 +31,14 @@ interface JobDetail {
     steps: { agent: string; what: string; detail: string; model?: string; tokens?: number; costUsd?: number }[];
     totalTokens: number;
     totalCostUsd: number;
-    status: "delivered" | "refused";
+    status: "delivered" | "refused" | "in-progress";
     reason?: string;
     revisions: number;
     deliveredAt: string;
+    stage: number;
   } | null;
+  nextStep: string | null;
+  backend: string;
   decisions: { id: string; kind: string; reason: string; hash: string; createdAt: string }[];
   verify: { ok: boolean };
   fxSwaps: unknown[];
@@ -88,11 +91,17 @@ export default function JobPage() {
   const [revisionNote, setRevisionNote] = useState("");
   const [showRevise, setShowRevise] = useState(false);
   const [decisionMsg, setDecisionMsg] = useState<string | null>(null);
+  // The latest job data, for the stage driver (refs do not go stale).
+  const dataRef = useRef<JobDetail | null>(null);
+  // True while this page is driving the stages — the poller must not
+  // start a second driver.
+  const drivingRef = useRef(false);
 
   const reload = async () => {
     const r = await fetch(`/api/jobs/${id}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d.error ?? "Job not found");
+    dataRef.current = d;
     setData(d);
   };
 
@@ -100,6 +109,46 @@ export default function JobPage() {
     reload().catch((e: Error) => setError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // While the team is working, check in every few seconds. If this page
+  // is not already driving the stages, pick the next stage up — so a
+  // refresh mid-run, or a stage that finished on another request, still
+  // moves the job forward.
+  useEffect(() => {
+    if (!data || data.job.status !== "in-progress") return;
+    const t = setInterval(() => {
+      if (drivingRef.current) return;
+      reload()
+        .then(() => driveStages())
+        .catch(() => {});
+    }, 3000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.job.status]);
+
+  /** Run the stages one by one until the report is delivered or refused. */
+  async function driveStages() {
+    if (drivingRef.current) return;
+    drivingRef.current = true;
+    setRunning(true);
+    setRunError(null);
+    try {
+      for (;;) {
+        const cur = dataRef.current;
+        if (!cur?.report || cur.report.status !== "in-progress" || cur.report.stage === 0) break;
+        const res = await fetch(`/api/jobs/${id}/run/step`, { method: "POST" });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error ?? "The team could not finish this step");
+        await reload();
+        if (d.done) break;
+      }
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : "The team could not finish the report");
+    } finally {
+      drivingRef.current = false;
+      setRunning(false);
+    }
+  }
 
   async function startWork(note?: string) {
     setRunning(true);
@@ -111,13 +160,13 @@ export default function JobPage() {
         body: JSON.stringify(note ? { revisionNote: note } : {}),
       });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.error ?? "The team could not finish the report");
+      if (!res.ok) throw new Error(d.error ?? "The team could not start the work");
       setShowRevise(false);
       setRevisionNote("");
       await reload();
+      await driveStages();
     } catch (e) {
       setRunError(e instanceof Error ? e.message : "The team could not finish the report");
-    } finally {
       setRunning(false);
     }
   }
@@ -150,8 +199,8 @@ export default function JobPage() {
           <h1 style={{ fontSize: 28 }}>Job not found</h1>
           <p style={{ marginTop: 8, color: "var(--ink-2)" }}>{error}</p>
           <p style={{ marginTop: 8, color: "var(--ink-2)" }}>
-            Jobs are saved on this site for now, so a job made before the
-            site was updated may be gone.
+            Jobs are saved in the site&apos;s database once it is connected.
+            A job made before that was connected may be gone.
           </p>
         </div>
       )}
@@ -210,6 +259,17 @@ export default function JobPage() {
                 <button onClick={() => startWork()} disabled={running} className="btn leaf lg" style={{ marginTop: 16 }}>
                   {running ? "The team is working…" : "Try again →"}
                 </button>
+                {runError && <p className="error" style={{ marginTop: 12 }}>{runError}</p>}
+              </div>
+            )}
+            {data.report && data.report.status === "in-progress" && (
+              <div className="card pad" style={{ marginTop: 12 }}>
+                <p style={{ color: "var(--ink-2)", lineHeight: 1.6 }}>
+                  {running ? (data.nextStep ? `${data.nextStep}…` : "The team is working…") : "The team is working — the page will pick the next step up on its own."}
+                </p>
+                <p style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+                  This takes a few minutes. Each finished step shows below as it lands — you can wait here.
+                </p>
                 {runError && <p className="error" style={{ marginTop: 12 }}>{runError}</p>}
               </div>
             )}

@@ -85,6 +85,77 @@ describe("runMarketReport (fake models + fake search)", () => {
     expect(result.steps[0].agent).toBe("Scout");
   });
 
+describe("runReportStage (chunked, one stage per call)", () => {
+  const stageDeps = () => {
+    const { chat } = fakeChat({
+      "You are Researcher": "Plan: compare Paystack and Flutterwave on fees and reach.",
+      "You are Writer": "# Payment options in Nigeria\n\nPaystack charges 1.5% per local transaction. Flutterwave was founded in 2016.\n\nSources:\n1. Paystack\n2. Flutterwave",
+      "You are Analyst": "Paystack 1.5% — in sources. Flutterwave 2016 — in sources. ALL NUMBERS CHECK OUT",
+      "You are Auditor": "PASS\nThe report only uses facts from the sources.",
+    });
+    return {
+      chat,
+      search: async () => [{ title: "Paystack", url: "https://example.com/paystack" }],
+      searchBing: async () => [],
+      wiki: async () => [],
+      fetchPage: async () => SOURCES[0],
+    };
+  };
+
+  it("runs Scout → write → check → audit, one stage per call, and delivers", async () => {
+    const { emptyReportProgress, runReportStage } = await import("./report.js");
+    let p = emptyReportProgress("Compare payment options for my shop in Lagos");
+    expect(p.stage).toBe(1);
+    const stages: number[] = [];
+    while (p.status === "in-progress" && p.stage !== 0) {
+      stages.push(p.stage);
+      // Progress survives a JSON round-trip (this is how it is stored
+      // between stages on the server).
+      p = JSON.parse(JSON.stringify(p)) as typeof p;
+      p = await runReportStage(p, stageDeps());
+    }
+    expect(stages).toEqual([1, 2, 3, 4]);
+    expect(p.status).toBe("delivered");
+    expect(p.stage).toBe(0);
+    expect(p.report).toContain("Paystack charges 1.5%");
+    expect(p.steps.map((s) => s.agent)).toEqual(["Scout", "Researcher", "Writer", "Analyst", "Auditor"]);
+    expect(p.totalCostUsd).toBeLessThan(REPORT_MODEL_BUDGET_USD);
+  });
+
+  it("a revision re-runs the write and audit stages, reusing Scout's pages", async () => {
+    const { emptyReportProgress, revisionProgress, runReportStage } = await import("./report.js");
+    const deps = stageDeps();
+    let p = emptyReportProgress("Compare payment options");
+    while (p.status === "in-progress" && p.stage !== 0) p = await runReportStage(p, deps);
+    expect(p.status).toBe("delivered");
+    const revised = revisionProgress(p, "Add the prices for each option");
+    expect(revised.stage).toBe(2);
+    expect(revised.pages.length).toBeGreaterThan(0);
+    expect(revised.steps).toHaveLength(0);
+    let q = revised;
+    const stages: number[] = [];
+    while (q.status === "in-progress" && q.stage !== 0) {
+      stages.push(q.stage);
+      q = await runReportStage(q, deps);
+    }
+    // No new Scout stage: the pages were reused.
+    expect(stages).toEqual([2, 3, 4]);
+    expect(q.status).toBe("delivered");
+    expect(q.revisions).toBe(0);
+  });
+
+  it("refuses at the Scout stage when nothing readable is found", async () => {
+    const { emptyReportProgress, runReportStage } = await import("./report.js");
+    const p = await runReportStage(emptyReportProgress("asdfqwer zxcv"), {
+      chat: fakeChat({ default: "unused" }).chat,
+      search: async () => [], searchBing: async () => [], wiki: async () => [], fetchPage: async () => null,
+    });
+    expect(p.status).toBe("refused");
+    expect(p.stage).toBe(0);
+    expect(p.reason).toMatch(/could not find anything readable/);
+  });
+});
+
   it("never spends past the $0.50 budget", async () => {
     const expensiveChat = async (input: { model: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<FortyTwoReply> => ({
       model: input.model,

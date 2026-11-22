@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getHire, getLedger, getReport } from "@/lib/jobs";
+import { reportStageLabel } from "@ikenga/agent";
+import { getHire, getLedger, getReport, ledgerBackend } from "@/lib/jobs";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const hire = getHire(id);
+  const hire = await getHire(id);
   if (!hire) return NextResponse.json({ error: "job not found" }, { status: 404 });
   const ledger = await getLedger();
   const order = await ledger.getOrder(id);
@@ -11,9 +12,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const chainOk = await ledger.verifyOrderChain(id);
   const fxSwaps = await ledger.listFxSwaps(id);
   const reconciliation = await ledger.reconcile(id);
+  const report = await getReport(id);
   return NextResponse.json({
     job: hire,
-    report: getReport(id),
+    report,
+    // Plain-words label for what the team is doing right now, if anything.
+    nextStep: report && report.status === "in-progress" ? reportStageLabel(report.stage) : null,
+    backend: ledgerBackend(),
     order,
     decisions: decisions.map((d) => ({
       id: d.id, kind: d.kind, reason: d.reason, amountMicroUsdc: d.amountMicroUsdc,

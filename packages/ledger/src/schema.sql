@@ -14,6 +14,14 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Hire fields that used to live only in server memory (Step 3 fix: a hire
+-- on one serverless instance must be visible to the next). Added with
+-- IF NOT EXISTS so old databases pick them up on init.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS bond_micro_usdc BIGINT NOT NULL DEFAULT 100000;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cfo_accepted BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cfo_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS decision_hash TEXT NOT NULL DEFAULT '';
+
 CREATE TABLE IF NOT EXISTS decision_log (
   id TEXT PRIMARY KEY,
   order_id TEXT NOT NULL REFERENCES orders(id),
@@ -83,4 +91,19 @@ CREATE TABLE IF NOT EXISTS x402_payments (
   status TEXT NOT NULL DEFAULT 'verified'
     CHECK (status IN ('verified', 'settled', 'failed', 'ambiguous')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Step 3: delivered work + in-progress report state. One row per order.
+-- `data` is the whole report as JSON (report text, sources, steps, totals,
+-- status, and — while the job is running — which stage is next and the
+-- pages/plan/draft gathered so far, so the next stage can pick up where
+-- the last one stopped, even on another serverless instance). `status` and
+-- `stage` are pulled out as columns so they can be read without parsing.
+CREATE TABLE IF NOT EXISTS deliveries (
+  order_id TEXT PRIMARY KEY REFERENCES orders(id),
+  status TEXT NOT NULL DEFAULT 'in-progress'
+    CHECK (status IN ('in-progress', 'delivered', 'refused')),
+  stage INT NOT NULL DEFAULT 1,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
