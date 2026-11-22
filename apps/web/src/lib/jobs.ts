@@ -74,7 +74,19 @@ export async function getLedger(): Promise<Ledger> {
   if (!ledgerInit) {
     ledgerInit = (async (): Promise<Ledger> => {
       if (process.env.DATABASE_URL) {
-        const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+        // Supabase's pooler presents a cert chain Node's default trust store
+        // rejects ("self-signed certificate in certificate chain"). pg maps
+        // sslmode=require to ssl:true, which still verifies — so when the URL
+        // asks for SSL, pass rejectUnauthorized:false explicitly (the pooler
+        // is still encrypted; we just don't verify its CA). Local Postgres
+        // URLs carry no sslmode and stay untouched.
+        const needsSsl = /sslmode=(require|prefer|verify-ca|verify-full)/.test(
+          process.env.DATABASE_URL,
+        );
+        const pool = new Pool({
+          connectionString: process.env.DATABASE_URL,
+          ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+        });
         const pg = new PostgresLedger(pool as never);
         await pg.init();
         ledgerSingleton = pg;
