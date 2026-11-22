@@ -923,3 +923,1024 @@ input[type="text"]:focus {
 .footer a {
   color: var(--ink-2);
 }
+
+/* ================================================================
+   Polish pass 2 — Syncly side-by-side audit (2026-11-22).
+   Everything below is Ikenga's own CSS for the new pieces: the drawn
+   HQ, the services index, sticky how-cards with art, the vault, the
+   money-path chips, the office scene, the FAQ accordions, the dark
+   close, the grouped nav menu and the four-column footer.
+   ================================================================ */
+
+/* ---------- nav: status chip + mobile menu sheet */
+.nav.scrolled {
+  box-shadow: 0 1px 0 rgba(19, 39, 28, 0.06), 0 8px 24px -18px rgba(19, 39, 28, 0.25);
+}
+.nav__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  border: 1px solid #f1dca8;
+  color: #7a5300;
+  white-space: nowrap;
+}
+.nav__menu {
+  display: none;
+}
+.nav__sheet {
+  display: none;
+}
+.nav.open .nav__sheet {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 8px clamp(16px, 2.4vw, 32px) 24px;
+  border-top: 1px solid var(--line);
+}
+.nav__gt {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.nav__group a {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.nav__group a small {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 13px;
+}
+@media (max-width: 900px) {
+  .nav__status {
+    display: none;
+  }
+  .nav__cta {
+    display: none;
+  }
+  .nav__menu {
+    display: inline-flex;
+  }
+  .nav.open .nav__sheet {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- hero: drawn HQ + reveal */
+.hx__copy > * {
+  animation: rise 0.7s var(--ease) both;
+}
+.hx__copy > *:nth-child(2) { animation-delay: 0.08s; }
+.hx__copy > *:nth-child(3) { animation-delay: 0.16s; }
+.hx__copy > *:nth-child(4) { animation-delay: 0.24s; }
+.hx__copy > *:nth-child(5) { animation-delay: 0.32s; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+.hx__art {
+  position: absolute;
+  right: clamp(24px, 4vw, 64px);
+  bottom: 0;
+  opacity: 0.95;
+  pointer-events: none;
+}
+@media (max-width: 900px) {
+  .hx__art {
+    display: none;
+  }
+}
+.hx__menu button {
+  background: none;
+  border: none;
+  padding: 0 0 2px;
+  font: inherit;
+  color: var(--on-deep);
+  font-size: 15px;
+  font-weight: 500;
+  border-bottom: 1px solid rgba(233, 239, 230, 0.35);
+  cursor: pointer;
+}
+.hx__menu button:hover {
+  border-bottom-color: var(--leaf);
+  color: #fff;
+}
+
+/* The HQ building, drawn in CSS. Syncly's hero is a photo of its
+   office; Ikenga has no photo, so the office is drawn instead. */
+.hq {
+  width: 300px;
+  display: grid;
+  justify-items: center;
+  gap: 0;
+}
+.hq__sign {
+  font: 600 12px var(--font-mono), monospace;
+  letter-spacing: 0.28em;
+  color: var(--leaf);
+  background: rgba(163, 227, 106, 0.12);
+  border: 1px solid rgba(163, 227, 106, 0.35);
+  border-radius: 999px;
+  padding: 6px 12px;
+  margin-bottom: 10px;
+}
+.hq__roof {
+  width: 0;
+  height: 0;
+  border-left: 150px solid transparent;
+  border-right: 150px solid transparent;
+  border-bottom: 34px solid #1e3a2b;
+}
+.hq__floors {
+  width: 100%;
+  background: #173a2a;
+  border: 1px solid rgba(233, 239, 230, 0.16);
+  border-top: none;
+  padding: 14px 18px 10px;
+  display: grid;
+  gap: 12px;
+}
+.hq__floor {
+  display: flex;
+  justify-content: space-between;
+}
+.hq__floor i {
+  width: 26px;
+  height: 32px;
+  border-radius: 4px;
+  background: rgba(233, 239, 230, 0.13);
+}
+.hq__floor i.lit {
+  background: var(--leaf);
+  opacity: 0.85;
+  box-shadow: 0 0 18px rgba(163, 227, 106, 0.45);
+}
+.hq__floor i.door {
+  background: var(--brass);
+  height: 40px;
+  align-self: flex-end;
+  border-radius: 4px 4px 0 0;
+}
+.hq__ground {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+.hq__ground i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+}
+.hq.big {
+  width: 340px;
+  margin: 0 auto;
+}
+.hq.big .hq__roof {
+  border-left-width: 170px;
+  border-right-width: 170px;
+}
+
+/* ---------- 01 · What we do: service cards with CSS previews */
+.ww-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+@media (max-width: 760px) {
+  .ww-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.ww-card {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.ww-body {
+  padding: 20px 22px 16px;
+}
+.ww-body h3 {
+  font-size: 19px;
+}
+.ww-body p {
+  margin-top: 6px;
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.ww-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.ww-meta b {
+  color: var(--ink);
+}
+.ww-go {
+  margin-top: auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 14px 22px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--line);
+  font: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.ww-go:hover {
+  background: var(--accent-soft);
+}
+.ww-go .pill__ic {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--paper-2);
+  font-size: 14px;
+}
+
+/* CSS previews inside the service cards (Syncly uses photos here;
+   Ikenga draws the same ideas in CSS). */
+.pv {
+  border-bottom: 1px solid var(--line);
+  background: var(--paper-2);
+  padding: 22px;
+  min-height: 190px;
+  display: grid;
+  place-items: center;
+}
+.phone {
+  width: 190px;
+  background: var(--deep);
+  border-radius: 26px;
+  padding: 14px 14px 16px;
+  color: #fff;
+  box-shadow: var(--shadow);
+}
+.phone .bar {
+  display: block;
+  width: 56px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.3);
+  margin: 0 auto 12px;
+}
+.phone .h {
+  display: block;
+  font-size: 16px;
+  line-height: 1.25;
+}
+.phone .l {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  margin-top: 8px;
+}
+.phone .l.s {
+  width: 60%;
+}
+.phone .btn {
+  display: inline-block;
+  margin-top: 12px;
+  background: var(--leaf);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 7px 12px;
+}
+.phone .ph {
+  height: 64px;
+  margin-top: 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #59a53b, #c8902f 55%, #4b8dcf);
+  opacity: 0.9;
+}
+.phone.big {
+  width: 230px;
+}
+.pv-video .frame {
+  width: 100%;
+  background: var(--deep);
+  color: #fff;
+  border-radius: 16px;
+  padding: 22px;
+  position: relative;
+}
+.pv-video .frame b {
+  font-size: 24px;
+  line-height: 1.15;
+}
+.pv-video .play {
+  position: absolute;
+  right: 18px;
+  top: 18px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--leaf);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+}
+.pv-video .prog {
+  display: block;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  margin-top: 18px;
+  overflow: hidden;
+}
+.pv-video .prog i {
+  display: block;
+  width: 38%;
+  height: 100%;
+  background: var(--leaf);
+}
+.pv-video .music {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.pv-flyer .sheet {
+  width: 100%;
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+.pv-flyer .sheet .lg {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--deep);
+  color: var(--leaf);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.pv-flyer .sheet b {
+  font-size: 16px;
+}
+.pv-flyer .sheet p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.pv-flyer .sheet p em {
+  flex: 1;
+  border-bottom: 1px dotted var(--line-2);
+}
+.pv-flyer .sheet .cta {
+  display: inline-block;
+  margin-top: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 12.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 6px 11px;
+}
+.pv-money .bars {
+  display: flex;
+  gap: 12px;
+  height: 96px;
+  align-items: flex-end;
+}
+.pv-money .bars span {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 100%;
+}
+.pv-money .bars i {
+  width: 14px;
+  border-radius: 4px 4px 0 0;
+  display: block;
+}
+.pv-money .bars i.in {
+  background: var(--accent-ink);
+}
+.pv-money .bars i.out {
+  background: var(--brass);
+}
+.pv-money .rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 14px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.pv-money .rows b {
+  color: var(--ink);
+}
+.pv-money .rows .ok {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* ---------- 02 · How it works: sticky stacking cards with art */
+.steps .step {
+  position: sticky;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 28px;
+  align-items: center;
+}
+.steps .step:nth-child(1) { top: 84px; }
+.steps .step:nth-child(2) { top: 100px; }
+.steps .step:nth-child(3) { top: 116px; }
+.steps .step:nth-child(4) { top: 132px; }
+@media (max-width: 760px) {
+  .steps .step {
+    grid-template-columns: 1fr;
+    position: static;
+  }
+}
+.step__s {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.hw-art {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 22px;
+}
+.hw-art__k {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.hw-art__q {
+  margin-top: 10px;
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+.hw-art__big {
+  margin-top: 10px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.hw-art__sub {
+  margin-top: 8px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.hw-art__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14.5px;
+  color: var(--ink-2);
+}
+.hw-art__row:last-of-type {
+  border-bottom: none;
+}
+.hw-art__row b {
+  color: var(--ink);
+  white-space: nowrap;
+}
+.hw-art__decide {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.hw-art__decide .decide {
+  background: #fff;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 550;
+}
+.hw-art__decide .decide.accept {
+  background: var(--accent-soft);
+  border-color: #cfe6bc;
+  color: var(--accent-ink);
+}
+
+/* ---------- 03 · Real work: two columns, stats, phone preview */
+.rw-grid {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 48px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .rw-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.rw-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 28px;
+}
+.rw-stats b {
+  display: block;
+  font: 600 40px/1.1 var(--font-mono), monospace;
+  letter-spacing: -0.02em;
+}
+.rw-stats span {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.rw-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+.rw-phone {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  padding: 36px 24px 56px;
+}
+.rw-badge {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 92%;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  background: rgba(19, 39, 28, 0.88);
+  color: var(--on-deep);
+  padding: 7px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 04 · Pay your way: three cards in a row */
+.paygrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+@media (max-width: 860px) {
+  .paygrid3 {
+    grid-template-columns: 1fr;
+  }
+}
+.paycard .fine {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.promise-card {
+  background: var(--paper-2);
+}
+
+/* ---------- 05 · CFO: the vault, drawn */
+.vault {
+  margin-top: 16px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(233, 239, 230, 0.14);
+  border-radius: var(--r);
+  padding: 24px;
+}
+.vault__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--on-deep-3);
+  margin-bottom: 8px;
+}
+.vault__bucket {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid rgba(233, 239, 230, 0.1);
+}
+.vault__bar {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  min-width: 6%;
+}
+.vault__label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--on-deep-2);
+}
+.vault__val {
+  font-size: 13px;
+  color: #fff;
+}
+.vault__note {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--on-deep-2);
+}
+
+/* ---------- 06 · Follow the money: chips, dark bar, Ikenga Pay */
+.mf-stat {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.bucket-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.mf-faces {
+  display: inline-flex;
+  align-items: center;
+}
+.mf-face {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border: 2px solid #fff;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-left: -6px;
+}
+.mf-face:first-child {
+  margin-left: 0;
+}
+.mf-more {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: 6px;
+}
+.mf-bar {
+  margin-top: 16px;
+  background: var(--deep);
+  color: var(--on-deep);
+  border-radius: var(--r);
+  padding: 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.mf-bar p {
+  max-width: 620px;
+  line-height: 1.6;
+  color: var(--on-deep-2);
+}
+.mf-bar p b {
+  color: #fff;
+}
+.mf-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pill.ghost.light {
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #fff;
+}
+.mf-pay {
+  margin-top: 16px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 24px 28px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.mf-new {
+  background: var(--leaf);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 6px;
+  padding: 5px 9px;
+}
+.mf-pay p {
+  flex: 1;
+  min-width: 260px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+.mf-pay p b {
+  color: var(--ink);
+}
+
+/* ---------- 07 · The team: stage header + per-agent stat */
+.tm-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 18px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.tm-prog i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-2);
+  margin-left: 5px;
+}
+.tm-prog i:first-child {
+  background: var(--leaf);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.agent-stat {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- 08 · The office: drawn scene + desks + bar */
+.office-scene {
+  margin-top: 28px;
+  background: var(--deep);
+  border-radius: var(--r-lg);
+  padding: 32px 24px 24px;
+  overflow: hidden;
+}
+.office-desks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px 18px;
+  margin-top: 24px;
+}
+.desk {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.desk .agent__avatar {
+  width: 44px;
+  height: 44px;
+  font-size: 15px;
+}
+.desk small {
+  font: 500 11px var(--font-mono), monospace;
+  letter-spacing: 0.06em;
+  color: var(--on-deep-2);
+}
+.office-bar {
+  margin-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+/* ---------- 09 · Questions: two-column accordions */
+.qa-grid {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 48px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .qa-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.faq details.faq-item {
+  padding: 0;
+  overflow: hidden;
+}
+.faq details.faq-item summary {
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  padding: 22px 28px;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.faq details.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+.faq details.faq-item summary::after {
+  content: "+";
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--paper-2);
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.faq details.faq-item[open ] summary::after {
+  content: "−";
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.faq details.faq-item p {
+  padding: 0 28px 22px;
+}
+
+/* ---------- 10 · Start here: dark close panel */
+.close-panel {
+  padding: clamp(28px, 5vw, 56px);
+}
+.close-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 48px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .close-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.close-art {
+  background: var(--deep-2);
+  border: 1px solid rgba(233, 239, 230, 0.14);
+  border-radius: var(--r);
+  padding: 28px;
+}
+.close-art__k {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--leaf);
+  font-weight: 600;
+}
+.close-art__big {
+  margin-top: 12px;
+  font: 600 72px/1 var(--font-mono), monospace;
+  letter-spacing: -0.03em;
+  color: #fff;
+}
+.close-art__sub {
+  margin-top: 8px;
+  color: var(--on-deep-2);
+  font-size: 15px;
+}
+.close-art__rows {
+  margin-top: 20px;
+  display: grid;
+}
+.close-art__rows div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(233, 239, 230, 0.14);
+  font-size: 14.5px;
+  color: var(--on-deep-2);
+}
+.close-art__rows b {
+  color: #fff;
+  white-space: nowrap;
+}
+.close-art .chip {
+  margin-top: 16px;
+}
+
+/* ---------- footer: four columns + base line */
+.footer__inner {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr 1fr;
+  gap: 32px;
+}
+@media (max-width: 900px) {
+  .footer__inner {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 560px) {
+  .footer__inner {
+    grid-template-columns: 1fr;
+  }
+}
+.foot-col h5 {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+.foot-col ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
+.foot-col a {
+  text-decoration: none;
+  font-size: 14.5px;
+  color: var(--ink-2);
+}
+.foot-col a:hover {
+  color: var(--ink);
+}
+.foot-base {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}

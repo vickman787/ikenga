@@ -1,17 +1,22 @@
+"use client";
+
 import HireForm from "@/components/HireForm";
+import Nav from "@/components/Nav";
 
 /**
- * Ikenga home page — rebuilt to match Syncly's live site
- * (hiresyncly.site) in structure and feel: a dark hero panel, numbered
- * sections (02 How it works, 03 Real work, 04 Pay your way, 05 the CFO,
- * 06 Follow the money, 07 The team, 08 The office, 09 Questions, 10 Start
- * here), cream paper, forest ink and leaf green. Ikenga branding and Celo
- * throughout — Textile FX USDT ↔ cNGN instead of Bachs/USDC-on-Arc, and
- * Self Agent ID instead of an unverified team.
+ * Ikenga home page — second polish pass, side-by-side against Syncly's
+ * live site (hiresyncly.site) and its public repo (web/src/views/Home.tsx,
+ * home/sections.tsx, home/art.tsx, components/Nav.tsx, components/Footer.tsx).
+ * Same structure, same palette, Ikenga's own code — no Syncly code copied
+ * verbatim, no Syncly images or sprites used (every visual here is drawn
+ * in CSS). Adapted to what Ikenga is for: Celo not Arc, Textile FX
+ * USDT ↔ cNGN not Bachs, Self Agent ID gate, tag celo_5144280c393f.
  *
- * Honesty rule: Ikenga has no live jobs or customers yet, so this page
- * invents none. Where Syncly shows live numbers, Ikenga shows an honest
- * empty state and the one live check that is real (the Textile FX preview).
+ * Honesty rule: Ikenga has no live jobs, customers, sellers or deployed
+ * contracts yet, so this page invents none. Where Syncly shows live proof,
+ * Ikenga shows honest zeros / empty states and the one live check that is
+ * real (the Textile FX preview). The seller registry starts empty by
+ * design, so no supplier names are shown for the agents.
  */
 
 const TEAM: { name: string; role: string; line: string; buys: string; pays: string }[] = [
@@ -25,6 +30,13 @@ const TEAM: { name: string; role: string; line: string; buys: string; pays: stri
   { name: "Analyst", role: "Compares the numbers", line: "Compares prices, answers and signals: the numbers on every report.", buys: "AI models", pays: "x402 · its own USDT balance on Celo" },
   { name: "Auditor", role: "Checks the work twice", line: "Checks the work on a different AI before it is delivered.", buys: "A second model family", pays: "x402 · its own USDT balance on Celo" },
   { name: "Messenger", role: "Gets it to you", line: "Packs the files and gets them to you.", buys: "Delivery", pays: "Paid by the CFO · one plan, not per delivery" },
+];
+
+const SERVICES: { id: "website" | "promo-video" | "flyers" | "market-report"; name: string; tagline: string; preview: "site" | "video" | "flyer" | "money" }[] = [
+  { id: "website", name: "Business website", tagline: "A one-page site with your best work, your services, and WhatsApp, call and directions on every screen.", preview: "site" },
+  { id: "promo-video", name: "Promo video", tagline: "A short motion ad for your feed, Stories and WhatsApp Status — the hook, the dish, the order card.", preview: "video" },
+  { id: "flyers", name: "Flyers & price list", tagline: "A price list and flyers your customers can order from, with your WhatsApp number on every one.", preview: "flyer" },
+  { id: "market-report", name: "Market report", tagline: "Where your money goes, read from your bank statement and reconciled — the numbers, not a guess.", preview: "money" },
 ];
 
 const FAQ: { q: string; a: string }[] = [
@@ -49,10 +61,30 @@ const FAQ: { q: string; a: string }[] = [
     a: "A team of AI agents, each with one job: one finds things, one reads, one writes, one designs, one checks. A separate AI audits the work before it reaches you, and every step is shown on your job page. An agent is paid only after its Self Agent ID is verified.",
   },
   {
+    q: "What is Self Agent ID?",
+    a: "Before any agent is paid, Ikenga checks that it is a real, verified agent — registered on Celo and verified with Self. An unverified agent is refused, and the refusal is written to the audit log. That is the Self Agent ID track: verified agents only, paid only after proof.",
+  },
+  {
+    q: "Is Ikenga live on Celo mainnet yet?",
+    a: "Not yet. The money path — CFO pricing, the hash-chained ledger, the Celo x402 client, the Textile FX client and the Self Agent ID gate — is built and tested, and a live Textile FX preview on Celo turns $10 USDT into about 14,440 cNGN. The escrow and vault contracts are written but not deployed, and no live swap or settlement has run. That happens with the first named real user, on Celo mainnet.",
+  },
+  {
     q: "Is my information private?",
     a: "Your full-quality files unlock only when you accept. Every CFO decision is hash-chained and signed in the public audit log — the log shows the money, not your private brief.",
   },
 ];
+
+const BUCKETS: { key: string; label: string; color: string }[] = [
+  { key: "operating", label: "OPERATING", color: "#4B8DCF" },
+  { key: "tools", label: "TOOLS", color: "#59A53B" },
+  { key: "bond", label: "BOND", color: "#8F5FC0" },
+  { key: "reserve", label: "RESERVE", color: "#C38300" },
+];
+
+function selectJob(id: "website" | "promo-video" | "flyers" | "market-report") {
+  window.dispatchEvent(new CustomEvent("ikenga:select-job", { detail: id }));
+  document.getElementById("hire")?.scrollIntoView({ behavior: "smooth" });
+}
 
 function SectionLabel({ n, children }: { n: string; children: React.ReactNode }) {
   return (
@@ -63,32 +95,165 @@ function SectionLabel({ n, children }: { n: string; children: React.ReactNode })
   );
 }
 
+/** The Ikenga HQ building, drawn in CSS — Syncly's hero is a photo of its
+ *  office; Ikenga has no photo, so the office is drawn instead. */
+function HqBuilding({ big }: { big?: boolean }) {
+  return (
+    <div className={`hq${big ? " big" : ""}`} aria-hidden="true">
+      <div className="hq__sign">IKENGA HQ</div>
+      <div className="hq__roof" />
+      <div className="hq__floors">
+        <div className="hq__floor"><i /><i className="lit" /><i /><i className="lit" /><i /></div>
+        <div className="hq__floor"><i className="lit" /><i /><i className="lit" /><i /><i className="lit" /></div>
+        <div className="hq__floor"><i /><i className="lit" /><i className="door" /><i className="lit" /><i /></div>
+      </div>
+      <div className="hq__ground"><i /><i /><i /></div>
+    </div>
+  );
+}
+
+function ServicePreview({ kind }: { kind: "site" | "video" | "flyer" | "money" }) {
+  if (kind === "site") {
+    return (
+      <div className="pv pv-site">
+        <div className="phone">
+          <i className="bar" />
+          <b className="h">Portraits that make you look twice</b>
+          <i className="l" /><i className="l s" />
+          <span className="btn">WhatsApp</span>
+          <div className="ph" />
+        </div>
+      </div>
+    );
+  }
+  if (kind === "video") {
+    return (
+      <div className="pv pv-video">
+        <div className="frame">
+          <b>Power up<br />your home</b>
+          <span className="play">▶</span>
+          <i className="prog"><i /></i>
+        </div>
+        <span className="music">♪ licensed music · 16 s</span>
+      </div>
+    );
+  }
+  if (kind === "flyer") {
+    return (
+      <div className="pv pv-flyer">
+        <div className="sheet">
+          <span className="lg">I</span>
+          <b>Price list</b>
+          {[
+            ["Small chops (50)", "₦12,500"],
+            ["Jollof tray", "₦30,000"],
+            ["Party tray (20)", "₦25,000"],
+            ["Samosa (50)", "₦12,000"],
+          ].map(([a, b]) => (
+            <p key={a}><span>{a}</span><em /><span>{b}</span></p>
+          ))}
+          <span className="cta">Order on WhatsApp</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="pv pv-money">
+      <div className="bars">
+        {[[62, 70], [80, 58], [70, 66], [92, 61]].map(([a, b], i) => (
+          <span key={i}><i className="in" style={{ height: `${a}%` }} /><i className="out" style={{ height: `${b}%` }} /></span>
+        ))}
+      </div>
+      <div className="rows">
+        <span>Rent <b>38%</b></span>
+        <span>Stock <b>31%</b></span>
+        <span>Charges <b>₦48k/yr</b></span>
+        <span className="ok">✓ reconciled</span>
+      </div>
+    </div>
+  );
+}
+
+const HOW: { n: string; h: string; s: string; p: React.ReactNode; art: "quote" | "escrow" | "receipt" | "decide" }[] = [
+  {
+    n: "01", h: "Tell us what you need.", s: "A short form. You see the price first.",
+    p: <>Pick a job and answer a few questions about your business. The AI CFO prices it before anything starts, and <b>puts up a bond you receive if you reject the work</b>.</>,
+    art: "quote",
+  },
+  {
+    n: "02", h: "Pay $1, in USDT or cNGN.", s: "Your money waits in escrow, not with us.",
+    p: <>Pay <b>1 USDT from your own wallet on Celo</b> — about ₦1,444 in cNGN at the live Textile FX preview — or let the naira leg convert it for you. The money is held by <b>a contract on Celo</b> until you accept the work.</>,
+    art: "escrow",
+  },
+  {
+    n: "03", h: "Watch the team work.", s: "Live, step by step, on your job page.",
+    p: <>The agents search, read, write and design while you watch, and <b>every tool they pay for is listed</b>, linked to its payment on Celo.</>,
+    art: "receipt",
+  },
+  {
+    n: "04", h: "Accept, revise, or get your money back.", s: "You decide. Silence for 48 hours counts as yes.",
+    p: <>Preview the work, then accept to unlock the full files, ask for <b>one free revision</b>, or reject it and <b>get your money back plus the bond</b>.</>,
+    art: "decide",
+  },
+];
+
+function HowArt({ kind }: { kind: "quote" | "escrow" | "receipt" | "decide" }) {
+  if (kind === "quote") {
+    return (
+      <div className="hw-art">
+        <span className="hw-art__k mono">Your brief</span>
+        <p className="hw-art__q">“A one-page website for my bakery in Yaba”</p>
+        <div className="hw-art__row"><span>Price, before anything starts</span><b>$1</b></div>
+        <div className="hw-art__row"><span>CFO bond if you reject</span><b>$0.10</b></div>
+      </div>
+    );
+  }
+  if (kind === "escrow") {
+    return (
+      <div className="hw-art">
+        <span className="hw-art__k mono">JobEscrow · Celo</span>
+        <p className="hw-art__big">🔒 $1 in escrow</p>
+        <p className="hw-art__sub">Held by the contract — not by Ikenga, not by the agent — until you accept the work.</p>
+        <span className="chip live"><span className="dot" /> Escrow funded</span>
+      </div>
+    );
+  }
+  if (kind === "receipt") {
+    return (
+      <div className="hw-art">
+        <span className="hw-art__k mono">Every tool payment, listed</span>
+        {[["Search", "paid"], ["Read", "paid"], ["Design", "paid"]].map(([a, b]) => (
+          <div className="hw-art__row" key={a}><span>{a}</span><b>✓ {b} · x402</b></div>
+        ))}
+        <p className="hw-art__sub">Each line links to its payment on Celo. Nothing is paid to a seller the CFO has not pinned.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="hw-art">
+      <span className="hw-art__k mono">Your decision</span>
+      <div className="hw-art__decide">
+        <span className="decide accept">✓ Accept — unlock the files</span>
+        <span className="decide">↺ One free revision</span>
+        <span className="decide">✕ Reject — $1 back + $0.10 bond</span>
+      </div>
+      <p className="hw-art__sub">Silence for 48 hours counts as yes.</p>
+    </div>
+  );
+}
+
 export default function Home() {
   return (
     <>
-      <header className="nav">
-        <div className="nav__bar">
-          <a href="#top" className="nav__logo">
-            <span className="nav__mark">I</span> Ikenga
-          </a>
-          <nav className="nav__links" aria-label="Sections">
-            <a href="#how">How it works</a>
-            <a href="#cfo">The CFO</a>
-            <a href="#money">Follow the money</a>
-            <a href="#team">The team</a>
-            <a href="#questions">Questions</a>
-          </nav>
-          <span style={{ flex: 1 }} />
-          <a href="#hire" className="pill dark">
-            Hire Ikenga — $1 <span className="pill__ic">→</span>
-          </a>
-        </div>
-      </header>
+      <Nav />
 
       <main id="top">
-        {/* 01 · hero */}
+        {/* 01 · hero — drawn HQ instead of Syncly's office photo */}
         <section className="hx">
           <div className="hx__panel">
+            <div className="hx__art" aria-hidden="true">
+              <HqBuilding />
+            </div>
             <div className="hx__copy">
               <span className="hx__tag">
                 <span className="dot" /> Built for Celo mainnet · Agents Open for Business
@@ -103,18 +268,19 @@ export default function Home() {
                 money: your payment waits in escrow on Celo until you say yes.
               </p>
               <div className="hx__cta">
-                <a href="#hire" className="pill white lg">
+                <a href="#services" className="pill white lg">
                   See what we do <span className="pill__ic">→</span>
                 </a>
-                <a href="#cfo" className="pill ghost lg">
+                <a href="#money" className="pill ghost lg">
                   How the AI CFO works <span className="pill__ic">→</span>
                 </a>
               </div>
               <div className="hx__menu">
-                <a href="#hire">Website</a>
-                <a href="#hire">Flyers</a>
-                <a href="#hire">Promo video</a>
-                <a href="#hire">Market report</a>
+                {SERVICES.map((s) => (
+                  <button key={s.id} type="button" onClick={() => selectJob(s.id)}>
+                    {s.name.replace("Business website", "Website").replace("Flyers & price list", "Flyers")}
+                  </button>
+                ))}
               </div>
             </div>
             <div className="hx__foot mono">
@@ -124,8 +290,43 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 02 · How it works */}
-        <section className="section" id="how">
+        {/* 01 · What we do — the services index Syncly opens with */}
+        <section className="section" id="services">
+          <div className="wrap">
+            <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
+              <SectionLabel n="01">What we do</SectionLabel>
+              <h2 className="h2" style={{ marginTop: 18 }}>
+                Everything a small business needs done. $1 each.
+              </h2>
+              <p>
+                Pick a job, fill a short form, and a team of AI agents does it.
+                You see the price before anything starts and only pay if you
+                accept the work.
+              </p>
+            </div>
+            <div className="ww-grid">
+              {SERVICES.map((s) => (
+                <article key={s.id} className="card ww-card">
+                  <ServicePreview kind={s.preview} />
+                  <div className="ww-body">
+                    <h3>{s.name}</h3>
+                    <p>{s.tagline}</p>
+                    <div className="ww-meta">
+                      <span><b>$1</b> · ≈ ₦1,444</span>
+                      <span>pay only if you accept</span>
+                    </div>
+                  </div>
+                  <button type="button" className="ww-go" onClick={() => selectJob(s.id)}>
+                    Order <span className="pill__ic">→</span>
+                  </button>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* 02 · How it works — stacking cards with art, like Syncly's */}
+        <section className="section tight" id="how">
           <div className="wrap">
             <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
               <SectionLabel n="02">How it works</SectionLabel>
@@ -133,95 +334,69 @@ export default function Home() {
                 Four steps. Pay only for work you accept.
               </h2>
             </div>
-            <div className="steps">
-              <div className="card step">
-                <span className="step__no">01 / 04</span>
-                <div>
-                  <h3>Tell us what you need.</h3>
-                  <p>
-                    A short form. You see the price first. Pick a job and answer a
-                    few questions about your business. The AI CFO prices it before
-                    anything starts, and <b>puts up a bond you receive if you reject
-                    the work</b>.
-                  </p>
-                </div>
-              </div>
-              <div className="card step">
-                <span className="step__no">02 / 04</span>
-                <div>
-                  <h3>Pay $1, in USDT or cNGN.</h3>
-                  <p>
-                    Your money waits in escrow, not with us. Pay <b>1 USDT from
-                    your own wallet on Celo</b> — about ₦1,444 in cNGN at the live
-                    Textile FX preview — or let the naira leg convert it for you.
-                    The money is held by <b>a contract on Celo</b> until you accept
-                    the work.
-                  </p>
-                </div>
-              </div>
-              <div className="card step">
-                <span className="step__no">03 / 04</span>
-                <div>
-                  <h3>Watch the team work.</h3>
-                  <p>
-                    Live, step by step, on your job page. The agents search, read,
-                    write and design while you watch, and <b>every tool they pay
-                    for is listed</b>, linked to its payment on Celo.
-                  </p>
-                </div>
-              </div>
-              <div className="card step">
-                <span className="step__no">04 / 04</span>
-                <div>
-                  <h3>Accept, revise, or get your money back.</h3>
-                  <p>
-                    You decide. Silence for 48 hours counts as yes. Preview the
-                    work, then accept to unlock the full files, ask for <b>one free
-                    revision</b>, or reject it and <b>get your money back plus the
-                    bond</b>.
-                  </p>
-                </div>
-              </div>
-            </div>
+            <ol className="steps">
+              {HOW.map((c, i) => (
+                <li key={c.n} className="card step">
+                  <div>
+                    <span className="step__no">{c.n} / 04</span>
+                    <h3>{c.h}</h3>
+                    <p className="step__s">{c.s}</p>
+                    <p>{c.p}</p>
+                  </div>
+                  <HowArt kind={c.art} />
+                </li>
+              ))}
+            </ol>
           </div>
         </section>
 
-        {/* 03 · Real work — honest empty state */}
+        {/* 03 · Real work — Syncly's layout, honest empty state */}
         <section className="section tight" id="work">
           <div className="wrap">
-            <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
-              <SectionLabel n="03">Real work</SectionLabel>
-              <h2 className="h2" style={{ marginTop: 18 }}>
-                Real businesses. Real work. Starting now.
-              </h2>
-            </div>
-            <div className="card pad" style={{ maxWidth: 880 }}>
-              <span className="chip demo">
-                <span className="dot" /> No jobs delivered yet
-              </span>
-              <p style={{ marginTop: 16, fontSize: "var(--lede)", color: "var(--ink-2)", lineHeight: 1.6 }}>
-                Ikenga has no finished jobs to show yet — no customer story, no
-                job counts. The first real job will appear here, with its job
-                page, its escrow and its CFO decisions, once a named user hires
-                the team.
-              </p>
-              <p style={{ marginTop: 12, color: "var(--ink-2)", lineHeight: 1.6 }}>
-                What is real today: the money path is built and checked. A live
-                Textile FX preview on Celo (verified 2026-11-21) turns $10 USDT
-                into about <b>14,440 cNGN</b> — roughly ₦1,444 per dollar. The
-                CFO pricing, the hash-chained ledger, the Celo x402 client and
-                the Self Agent ID gate are all built and tested.
-              </p>
-              <div style={{ marginTop: 24 }}>
-                <a href="#hire" className="btn primary lg">
-                  Be the first job →
-                </a>
+            <div className="rw-grid">
+              <div>
+                <SectionLabel n="03">Real work</SectionLabel>
+                <h2 className="h2" style={{ marginTop: 18 }}>
+                  Real businesses. Real work. Starting now.
+                </h2>
+                <p className="lede" style={{ marginTop: 16, color: "var(--ink-2)", lineHeight: 1.6 }}>
+                  Ikenga has no finished jobs to show yet — no customer story,
+                  no job counts. The first real job will appear here, with its
+                  job page, its escrow and its CFO decisions, once a named user
+                  hires the team.
+                </p>
+                <div className="rw-stats">
+                  <div><b>0</b><span>jobs delivered</span></div>
+                  <div><b>0</b><span>businesses served</span></div>
+                  <div><b>0</b><span>payments settled on Celo</span></div>
+                </div>
+                <div className="rw-cta">
+                  <a href="#hire" className="pill dark">Be the first job <span className="pill__ic">→</span></a>
+                  <a href="#money" className="pill green">See how the money moves <span className="pill__ic">→</span></a>
+                </div>
+              </div>
+              <div className="rw-phone">
+                <div className="phone big">
+                  <i className="bar" />
+                  <b className="h">Portraits that make you look twice</b>
+                  <i className="l" /><i className="l s" />
+                  <span className="btn">WhatsApp</span>
+                  <div className="ph" />
+                </div>
+                <span className="rw-badge mono">First delivery preview · an illustration, not a real customer — yet</span>
               </div>
             </div>
+            <p style={{ marginTop: 28, color: "var(--ink-2)", lineHeight: 1.6, maxWidth: 760 }}>
+              What is real today: the money path is built and checked. A live
+              Textile FX preview on Celo (verified 2026-11-21) turns $10 USDT
+              into about <b>14,440 cNGN</b> — roughly ₦1,444 per dollar. The
+              CFO pricing, the hash-chained ledger, the Celo x402 client and
+              the Self Agent ID gate are all built and tested.
+            </p>
           </div>
         </section>
 
-        {/* 04 · Pay your way */}
+        {/* 04 · Pay your way — three cards in a row, like Syncly's */}
         <section className="section tight" id="pay">
           <div className="wrap">
             <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
@@ -230,7 +405,7 @@ export default function Home() {
                 Pay in USDT or cNGN. Only if you accept.
               </h2>
             </div>
-            <div className="paygrid">
+            <div className="paygrid3">
               <div className="card paycard">
                 <span className="chip live">
                   <span className="dot" /> cNGN
@@ -241,6 +416,7 @@ export default function Home() {
                   through <b>Textile FX</b>, which converts USDT to cNGN on Celo
                   mainnet — no bank transfer, no middleman holding your money.
                 </p>
+                <p className="fine">Bank transfer is not live yet — the naira desk converts USDT to cNGN on Celo.</p>
               </div>
               <div className="card paycard">
                 <span className="chip">USDT</span>
@@ -250,37 +426,22 @@ export default function Home() {
                   Rabby, Coinbase Wallet and other wallets. Your $1 waits in
                   escrow until you accept the work.
                 </p>
+                <p className="fine">USDT on another chain? Bridge it to Celo first.</p>
               </div>
-            </div>
-            <div className="card pad" style={{ marginTop: 16 }}>
-              <h3 style={{ fontSize: 18, marginBottom: 16 }}>Our promise</h3>
-              <ul className="promise">
-                <li>
-                  <span>
-                    <b>The price is fixed</b> before anything starts.
-                  </span>
-                </li>
-                <li>
-                  <span>
-                    <b>Your money waits in escrow</b>, not with us, until you accept.
-                  </span>
-                </li>
-                <li>
-                  <span>
-                    <b>One free revision</b> if it&rsquo;s not quite right.
-                  </span>
-                </li>
-                <li>
-                  <span>
-                    <b>Reject it</b> and you get your money back, plus a bond.
-                  </span>
-                </li>
-              </ul>
+              <div className="card paycard promise-card">
+                <span className="chip">Our promise</span>
+                <ul className="promise" style={{ marginTop: 16 }}>
+                  <li><span><b>The price is fixed</b> before anything starts.</span></li>
+                  <li><span><b>Your money waits in escrow</b>, not with us, until you accept.</span></li>
+                  <li><span><b>One free revision</b> if it&rsquo;s not quite right.</span></li>
+                  <li><span><b>Reject it</b> and you get your money back, plus a bond.</span></li>
+                </ul>
+              </div>
             </div>
           </div>
         </section>
 
-        {/* 05 · Behind the scenes — the CFO */}
+        {/* 05 · Behind the scenes — the CFO, with the vault drawn */}
         <section className="section tight" id="cfo">
           <div className="wrap">
             <div className="dark-panel on-dark">
@@ -321,20 +482,36 @@ export default function Home() {
                   </p>
                 </div>
               </div>
+              <div className="vault">
+                <div className="vault__head mono">
+                  <span>IkengaVault · Celo mainnet</span>
+                  <span>illustration · vault not yet deployed</span>
+                </div>
+                <div className="vault__buckets">
+                  {BUCKETS.map((b) => (
+                    <div key={b.key} className="vault__bucket">
+                      <span className="vault__bar" style={{ background: b.color, width: "6%" }} />
+                      <span className="vault__label mono">{b.label}</span>
+                      <span className="vault__val mono">0.00 USDT</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="vault__note">
+                  Balances are 0 until the first job settles — the vault holds
+                  nothing yet. Weekly tool budget: 30 USDT. An agent is paid
+                  only after its Self Agent ID is verified.
+                </p>
+              </div>
               <div className="cfo-log">
                 <span>
-                  Decision log · <b>0</b> carried out · <b>0</b> to the Boss
+                  Decision log · <b>0</b> carried out · <b>0</b> to the Boss ·{" "}
+                  <b>✓</b> log verified
                 </span>
                 <span>
                   No decisions yet — the first ones appear here once a job runs.
                 </span>
                 <a href="/api/cfo">Read the CFO&rsquo;s rules →</a>
               </div>
-              <p style={{ marginTop: 20, color: "var(--on-deep-3)", fontSize: 14, lineHeight: 1.6 }}>
-                IkengaVault · Celo mainnet · not yet deployed. Weekly tool
-                budget: 30 USDT. An agent is paid only after its Self Agent ID
-                is verified.
-              </p>
             </div>
           </div>
         </section>
@@ -364,6 +541,7 @@ export default function Home() {
                     Celo. Ikenga is paid only when the customer accepts. A
                     rejection refunds it, <b>plus a bond the CFO put up</b>.
                   </p>
+                  <p className="mono mf-stat"><span className="dot" /> 0 jobs delivered</p>
                 </div>
               </div>
               <div className="card money-step">
@@ -377,7 +555,12 @@ export default function Home() {
                     across four buckets — operating, tools, bond, reserve — and
                     keeps the reserve above its floor.
                   </p>
-                  <p className="mono">A plan sealed on Celo each week</p>
+                  <p className="mono mf-stat">
+                    {BUCKETS.map((b) => (
+                      <i key={b.key} className="bucket-dot" style={{ background: b.color }} title={b.label} />
+                    ))}
+                    A plan sealed on Celo each week
+                  </p>
                 </div>
               </div>
               <div className="card money-step">
@@ -392,7 +575,15 @@ export default function Home() {
                     when they run low — and only after their Self Agent ID is
                     verified.
                   </p>
-                  <p className="mono">10 agent wallets on Celo</p>
+                  <p className="mono mf-stat">
+                    <span className="mf-faces">
+                      {TEAM.slice(0, 5).map((a) => (
+                        <span key={a.name} className="mf-face" title={a.name}>{a.name[0]}</span>
+                      ))}
+                      <span className="mf-more">+5</span>
+                    </span>
+                    10 agent wallets on Celo
+                  </p>
                 </div>
               </div>
               <div className="card money-step">
@@ -407,6 +598,7 @@ export default function Home() {
                     signed, and every payment carries the hackathon attribution
                     tag.
                   </p>
+                  <p className="mono mf-stat"><span className="dot" /> 0 paid · 0 settled on Celo · seller registry empty — no sellers pinned yet</p>
                 </div>
               </div>
               <div className="card money-step">
@@ -420,25 +612,36 @@ export default function Home() {
                     by the CFO&rsquo;s key, and its hash rides on the vault
                     transaction. Anyone can replay the log.
                   </p>
-                  <p className="mono">
-                    <a href="/api/cfo">The decision log →</a> ·{" "}
-                    <a href="/api/traction">Live numbers →</a>
-                  </p>
+                  <p className="mono mf-stat">0x… · 0 entries · verified ✓</p>
                 </div>
               </div>
             </div>
-            <p style={{ marginTop: 24, color: "var(--ink-2)", lineHeight: 1.6, maxWidth: 680 }}>
-              <b style={{ color: "var(--ink)" }}>
-                Autonomous, inside hard limits.
-              </b>{" "}
-              The CFO acts alone only up to a limit the owner sets on the vault.
-              Anything bigger is a proposal that only the owner&rsquo;s wallet can
-              co-sign on Celo, and no language model ever touches the money.
-            </p>
+            <div className="mf-bar">
+              <p>
+                <b>Autonomous, inside hard limits.</b> The CFO acts alone only
+                up to a limit the owner sets on the vault. Anything bigger is a
+                proposal that only the owner&rsquo;s wallet can co-sign on Celo,
+                and no language model ever touches the money.
+              </p>
+              <span className="mf-links">
+                <a href="/api/cfo" className="pill green">The signed log <span className="pill__ic">→</span></a>
+                <a href="https://github.com/vickman787/ikenga/blob/main/docs/spec.md" className="pill ghost light">The CFO&rsquo;s rules <span className="pill__ic">→</span></a>
+              </span>
+            </div>
+            <div className="mf-pay">
+              <span className="mf-new mono">New</span>
+              <p>
+                <b>Ikenga Pay — the naira leg.</b> The same escrow rules, for a
+                real naira bill: USDT converts to cNGN on Textile FX and the
+                supplier is paid in cNGN — only after the agent&rsquo;s Self
+                Agent ID is verified.
+              </p>
+              <a href="#pay" className="pill dark">How the naira leg works <span className="pill__ic">→</span></a>
+            </div>
           </div>
         </section>
 
-        {/* 07 · The team */}
+        {/* 07 · The team — Syncly's pinned stage, as a stage header + grid */}
         <section className="section tight" id="team">
           <div className="wrap">
             <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
@@ -451,6 +654,10 @@ export default function Home() {
                 allowance from the CFO, and it pays for its own tools one call
                 at a time.
               </p>
+            </div>
+            <div className="tm-top mono">
+              <span><span className="dot" /> Ikenga HQ</span>
+              <span className="tm-prog">{TEAM.map((a) => <i key={a.name} />)}</span>
             </div>
             <div className="team-grid">
               {TEAM.map((a) => (
@@ -465,18 +672,22 @@ export default function Home() {
                     <p className="buys">
                       Buys <b>{a.buys}</b> · Pays with <b>{a.pays}</b>
                     </p>
+                    <p className="mono agent-stat"><span className="dot" /> 0 paid calls · waiting for the first one</p>
                   </div>
                 </div>
               ))}
             </div>
-            <p style={{ marginTop: 20, color: "var(--muted)", fontSize: 14 }}>
-              On the team, waiting for their first paid call — the agents are
-              built and gated by Self Agent ID, but no agent has been paid yet.
+            <p style={{ marginTop: 20, color: "var(--muted)", fontSize: 14, lineHeight: 1.6 }}>
+              Tool sellers: the registry is empty — a seller is pinned only
+              when the user approves that tool, so no agent can pay an
+              unapproved supplier. On the team, waiting for their first paid
+              call — the agents are built and gated by Self Agent ID, but no
+              agent has been paid yet.
             </p>
           </div>
         </section>
 
-        {/* 08 · The office */}
+        {/* 08 · The office — a drawn office scene, like Syncly's live office */}
         <section className="section tight" id="office">
           <div className="wrap">
             <div className="office-panel">
@@ -484,91 +695,148 @@ export default function Home() {
               <h2 className="h2" style={{ marginTop: 18 }}>
                 Watch them work. Every movement is a real event.
               </h2>
+              <div className="office-scene">
+                <HqBuilding big />
+                <div className="office-desks">
+                  {TEAM.map((a) => (
+                    <span key={a.name} className="desk" title={`${a.name} — ${a.role}`}>
+                      <span className="agent__avatar">{a.name[0]}</span>
+                      <small>{a.name}</small>
+                    </span>
+                  ))}
+                </div>
+              </div>
               <p style={{ marginTop: 16, fontSize: "var(--lede)", color: "var(--ink-2)", maxWidth: 640, marginLeft: "auto", marginRight: "auto" }}>
                 Every step an agent takes shows up on your job page — what it
                 searched, what it read, what it paid for — linked to its
                 payment on Celo.
               </p>
-              <div className="office-avatars" aria-hidden="true">
-                {TEAM.map((a) => (
-                  <span key={a.name} className="agent__avatar" title={a.name}>
-                    {a.name[0]}
-                  </span>
-                ))}
+              <div className="office-bar mono">
+                <span><span className="dot" /> Ikenga HQ · every movement is a real event</span>
+                <span>The live office opens with the first job</span>
               </div>
-              <p style={{ marginTop: 24, color: "var(--muted)", fontSize: 14 }}>
-                Ikenga HQ · the live office view opens with the first job.
-              </p>
             </div>
           </div>
         </section>
 
-        {/* 09 · Questions */}
+        {/* 09 · Questions — Syncly's two-column accordion layout */}
         <section className="section tight" id="questions">
-          <div className="wrap">
-            <div className="shead">
+          <div className="wrap qa-grid">
+            <div>
               <SectionLabel n="09">Questions</SectionLabel>
               <h2 className="h2" style={{ marginTop: 18 }}>
                 Before you order.
               </h2>
-              <p>
-                Still unsure? Order the $1 job you need most and see for
-                yourself.
+              <p style={{ marginTop: 16, fontSize: "var(--lede)", color: "var(--ink-2)" }}>
+                Still unsure?{" "}
+                <a href="https://github.com/vickman787/ikenga/blob/main/docs/spec.md">Read the spec</a>
+                , or order the $1 job you need most and see for yourself.
               </p>
             </div>
             <div className="faq">
               {FAQ.map((f) => (
-                <div key={f.q} className="card faq-item">
-                  <h3>{f.q}</h3>
+                <details key={f.q} className="card faq-item">
+                  <summary>{f.q}</summary>
                   <p>{f.a}</p>
-                </div>
+                </details>
               ))}
             </div>
           </div>
         </section>
 
-        {/* 10 · Start here */}
+        {/* 10 · Start here — Syncly's dark close, with the hire form */}
         <section className="section tight" id="hire">
           <div className="wrap">
-            <div className="shead">
-              <SectionLabel n="10">Start here</SectionLabel>
-              <h2 className="h2" style={{ marginTop: 18 }}>
-                What should the team do for you?
-              </h2>
-              <p>
-                Pick a job and say what you need in a sentence. You see the price
-                before anything starts, and every job is $1.
-              </p>
+            <div className="dark-panel on-dark close-panel">
+              <div className="close-grid">
+                <div>
+                  <SectionLabel n="10">Start here</SectionLabel>
+                  <h2 className="h2" style={{ marginTop: 18 }}>
+                    What should the team do for you?
+                  </h2>
+                  <p className="lede">
+                    Pick a job and say what you need in a sentence. You see the
+                    price before anything starts, and every job is $1.
+                  </p>
+                  <div style={{ maxWidth: 560, marginTop: 28 }}>
+                    <HireForm />
+                  </div>
+                  <p className="mono" style={{ marginTop: 24, fontSize: 13, color: "var(--on-deep-3)" }}>
+                    $1 a job · pay in USDT or cNGN · only if you accept · refund + bond if you reject
+                  </p>
+                </div>
+                <div className="close-art" aria-hidden="true">
+                  <span className="mono close-art__k">Your price, before anything starts</span>
+                  <p className="close-art__big">$1</p>
+                  <p className="close-art__sub">Every job. Fixed before you pay.</p>
+                  <div className="close-art__rows">
+                    <div><span>In escrow until you accept</span><b>$1 USDT</b></div>
+                    <div><span>CFO bond if you reject</span><b>$0.10</b></div>
+                    <div><span>One free revision</span><b>included</b></div>
+                  </div>
+                  <span className="chip live"><span className="dot" /> Escrow · CFO · Self-verified agents</span>
+                </div>
+              </div>
             </div>
-            <div style={{ maxWidth: 720, margin: "0 auto" }}>
-              <HireForm />
-            </div>
-            <p className="mono" style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "var(--muted)" }}>
-              $1 a job · pay in USDT or cNGN · only if you accept · refund + bond if you reject
-            </p>
           </div>
         </section>
       </main>
 
       <footer className="footer">
         <div className="wrap footer__inner">
-          <div>
-            <a href="#top" className="nav__logo" style={{ marginBottom: 12 }}>
+          <div className="foot-brand">
+            <a href="#top" className="nav__logo">
               <span className="nav__mark">I</span> Ikenga
             </a>
             <p style={{ marginTop: 12 }}>
-              Agents do the work. The CFO runs the money. Built for the Celo
-              &ldquo;Agents Open for Business&rdquo; hackathon — Track 1
-              Stablecoin Corridors (Textile FX USDT ↔ cNGN) and Track 3 Self
-              Agent ID. Inspired by Syncly (github.com/neromtoobad/syncly).
-              Fresh implementation — no code copied.
+              Your business&rsquo;s AI team: websites, flyers, promo videos and
+              a money report, $1 a job. Pay in USDT or cNGN, only if you
+              accept. An AI CFO runs the money, inside limits a smart contract
+              on Celo enforces.
             </p>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 14.5 }}>
-            <a href="/api/cfo">The signed CFO log →</a>
-            <a href="/api/traction">Live numbers →</a>
-            <a href="https://github.com/vickman787/ikenga">GitHub →</a>
+          <div className="foot-col">
+            <h5 className="mono">Hire the team</h5>
+            <ul>
+              <li><a href="#services">Services</a></li>
+              <li><a href="#how">How it works</a></li>
+              <li><a href="#work">Real work</a></li>
+              <li><a href="#pay">Pay in USDT or cNGN</a></li>
+              <li><a href="#questions">Questions</a></li>
+            </ul>
           </div>
+          <div className="foot-col">
+            <h5 className="mono">How Ikenga runs</h5>
+            <ul>
+              <li><a href="#cfo">The AI CFO</a></li>
+              <li><a href="#money">Follow the money</a></li>
+              <li><a href="#team">The team</a></li>
+              <li><a href="#office">The office</a></li>
+              <li><a href="#pay">Ikenga Pay — the naira leg</a></li>
+            </ul>
+          </div>
+          <div className="foot-col">
+            <h5 className="mono">Proof</h5>
+            <ul>
+              <li><a href="https://github.com/vickman787/ikenga/tree/main/docs">Docs</a></li>
+              <li><a href="/api/cfo">The CFO&rsquo;s signed log</a></li>
+              <li><a href="/api/traction">Live numbers</a></li>
+              <li><a href="https://github.com/vickman787/ikenga">Source code</a></li>
+            </ul>
+          </div>
+          <div className="foot-col">
+            <h5 className="mono">On Celo</h5>
+            <ul>
+              <li><a href="https://celoscan.io/token/0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" target="_blank" rel="noreferrer">USDT on Celo ↗</a></li>
+              <li><a href="https://celoscan.io/token/0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f" target="_blank" rel="noreferrer">cNGN on Celo ↗</a></li>
+              <li><a href="https://celoscan.io/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" target="_blank" rel="noreferrer">ERC-8004 registry ↗</a></li>
+              <li><a href="https://textilecredit.com" target="_blank" rel="noreferrer">Textile FX ↗</a></li>
+            </ul>
+          </div>
+        </div>
+        <div className="wrap foot-base mono">
+          <span>© 2026 Ikenga</span>
+          <span>Settled in USDT on Celo · Attribution celo_5144280c393f</span>
         </div>
       </footer>
     </>

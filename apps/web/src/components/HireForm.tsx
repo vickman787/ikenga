@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { JOB_LABELS, JOB_TYPES, type JobType } from "@ikenga/shared";
 
 interface HireResult {
@@ -22,6 +22,17 @@ export default function HireForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<HireResult | null>(null);
+
+  // Service cards and the hero menu on the home page pick the job type
+  // here, so "Order" lands on the hire form with the right job selected.
+  useEffect(() => {
+    const onSelect = (e: Event) => {
+      const t = (e as CustomEvent<JobType>).detail;
+      if (JOB_TYPES.includes(t)) setJobType(t);
+    };
+    window.addEventListener("ikenga:select-job", onSelect);
+    return () => window.removeEventListener("ikenga:select-job", onSelect);
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -136,6 +147,11 @@ export default function HireForm() {
           <p style={{ marginTop: 6, color: "var(--ink-2)" }}>{result.cfoReason}</p>
           <p className="mono" style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", wordBreak: "break-all" }}>
             CFO decision hash: {result.decisionHash}
+          </p>
+          <p style={{ marginTop: 12 }}>
+            <a href={`/jobs/${result.id}`} style={{ fontWeight: 700, color: "var(--accent-ink)" }}>
+              Watch your job →
+            </a>
           </p>
         </div>
       )}
