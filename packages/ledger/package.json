@@ -1,0 +1,30 @@
+{
+  "name": "@ikenga/ledger",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && cp src/schema.sql dist/schema.sql",
+    "test": "pnpm --filter @ikenga/shared build && vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ikenga/shared": "workspace:*",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "pg-mem": "^3.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.0"
+  }
+}

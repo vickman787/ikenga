@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+:root {
+  --ikenga-bg: #0b0b14;
+  --ikenga-gold: #f5c518;
+  --ikenga-purple: #7c3aed;
+  --ikenga-ghost: #f8f7ff;
+  --ikenga-muted: #9a9ab0;
+}
+
+html,
+body {
+  background: var(--ikenga-bg);
+  color: var(--ikenga-ghost);
+}

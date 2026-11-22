@@ -1,0 +1,32 @@
+{
+  "name": "@ikenga/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && next build",
+    "dev": "next dev",
+    "start": "next start",
+    "test": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ikenga/ledger": "workspace:*",
+    "@ikenga/payments": "workspace:*",
+    "@ikenga/shared": "workspace:*",
+    "next": "16.0.10",
+    "pg": "^8.13.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.0"
+  }
+}

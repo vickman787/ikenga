@@ -1,0 +1,23 @@
+{
+  "name": "@ikenga/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "exec:sepolia": "tsc -p tsconfig.build.json && node dist/e2e-sepolia.js",
+    "test": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ikenga/ledger": "workspace:*",
+    "@ikenga/payments": "workspace:*",
+    "@ikenga/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  }
+}

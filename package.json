@@ -1,0 +1,17 @@
+{
+  "name": "ikenga",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "description": "Ikenga \u2014 AI agents do $1 jobs for Nigerian small businesses, an AI CFO runs the money, rebuilt for Celo. Agents Open for Business hackathon, tracks: Stablecoin Corridors + Self Agent ID.",
+  "scripts": {
+    "build": "pnpm --filter @ikenga/web build",
+    "build:packages": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build",
+    "dev": "pnpm --filter @ikenga/web dev",
+    "test": "pnpm --filter @ikenga/shared test && pnpm --filter @ikenga/ledger test && pnpm --filter @ikenga/payments test && pnpm --filter @ikenga/agent test && pnpm --filter @ikenga/web test",
+    "typecheck": "pnpm build:packages && pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "@ikenga/payments",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "pnpm --filter @ikenga/shared build && vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@celo/attribution-tags": "^0.5.0",
+    "@ikenga/shared": "workspace:*",
+    "@selfxyz/agent-sdk": "0.3.1",
+    "@x402/core": "^2.32.0",
+    "@x402/evm": "^2.32.0",
+    "@x402/extensions": "^2.32.0",
+    "@x402/fetch": "^2.32.0",
+    "@x402/hono": "^2.32.0",
+    "viem": "^2.58.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.0"
+  }
+}
