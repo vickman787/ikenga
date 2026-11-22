@@ -31,7 +31,7 @@ const SERVICES: { id: "website" | "promo-video" | "flyers" | "market-report"; na
   { id: "website", name: "Business website", tagline: "A one-page site for your business — your best work, your services, and WhatsApp, call and directions on every screen.", preview: "site" },
   { id: "promo-video", name: "Promo video", tagline: "A short video for your feed, your Stories and your WhatsApp Status — the hook, the food, the order card.", preview: "video" },
   { id: "flyers", name: "Flyers & price list", tagline: "A price list and flyers your customers can actually order from, with your WhatsApp number on every one.", preview: "flyer" },
-  { id: "market-report", name: "Market report", tagline: "We read your bank statement and show you where your money really went — the numbers, not a guess.", preview: "money" },
+  { id: "market-report", name: "Market report", tagline: "We look up the market for you — the businesses, the prices, the numbers, with sources.", preview: "money" },
 ];
 
 const FAQ: { q: string; a: string }[] = [

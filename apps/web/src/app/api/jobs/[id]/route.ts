@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getHire, getLedger } from "@/lib/jobs";
+import { getHire, getLedger, getReport } from "@/lib/jobs";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -13,6 +13,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const reconciliation = await ledger.reconcile(id);
   return NextResponse.json({
     job: hire,
+    report: getReport(id),
     order,
     decisions: decisions.map((d) => ({
       id: d.id, kind: d.kind, reason: d.reason, amountMicroUsdc: d.amountMicroUsdc,

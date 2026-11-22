@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && next build",
+    "build": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && pnpm --filter @ikenga/agent build && next build",
     "dev": "next dev",
     "start": "next start",
     "test": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && vitest run",
@@ -12,6 +12,7 @@
   "dependencies": {
     "@fontsource/geist": "^5.3.0",
     "@fontsource/geist-mono": "^5.3.0",
+    "@ikenga/agent": "workspace:*",
     "@ikenga/ledger": "workspace:*",
     "@ikenga/payments": "workspace:*",
     "@ikenga/shared": "workspace:*",

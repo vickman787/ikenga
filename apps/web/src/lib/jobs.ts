@@ -33,7 +33,7 @@ export interface HireResult {
   jobType: JobType;
   description: string;
   customerWallet: string;
-  status: "draft";
+  status: "draft" | "in-progress" | "delivered" | "accepted" | "rejected" | "refunded";
   priceUsdc: number;
   bondUsdc: number;
   cfoAccepted: boolean;
@@ -82,6 +82,37 @@ export function listHires(): HireResult[] {
 
 export function getHire(id: string): HireResult | null {
   return orders.find((o) => o.id === id) ?? null;
+}
+
+/** Change a hire's status (accept / reject) — only the paying wallet's job. */
+export function setHireStatus(id: string, status: HireResult["status"]): HireResult | null {
+  const hire = orders.find((o) => o.id === id);
+  if (!hire) return null;
+  hire.status = status;
+  return hire;
+}
+
+/** The delivered work for a job, once the team has done it. */
+export interface StoredReport {
+  report: string;
+  sources: { title: string; url: string }[];
+  steps: { agent: string; what: string; detail: string; model?: string; tokens?: number; costUsd?: number }[];
+  totalTokens: number;
+  totalCostUsd: number;
+  status: "delivered" | "refused";
+  reason?: string;
+  revisions: number;
+  deliveredAt: string;
+}
+
+const reports = new Map<string, StoredReport>();
+
+export function getReport(id: string): StoredReport | null {
+  return reports.get(id) ?? null;
+}
+
+export function setReport(id: string, report: StoredReport): void {
+  reports.set(id, report);
 }
 
 export async function createHire(input: HireInput): Promise<HireResult> {

@@ -1,16 +1,17 @@
-/** Ikenga agent runner CLI — Step 2: runs one job through the real loop. No money moves unless live deps are injected (see e2e-sepolia.ts). */
-import { AgentRunner } from "./agent.js";
-
-const runner = new AgentRunner();
-const result = await runner.runJob({
-  jobType: "website",
-  toolCostUsdc: 0.6,
-  accepted: 0,
-  quoted: 0,
-  agentId: process.env.SELF_AGENT_ID ?? "0",
-  agentAddress: process.env.SELF_AGENT_ADDRESS ?? "0x0000000000000000000000000000000000000000",
-  orderId: "ord_demo_1",
-});
-console.log(JSON.stringify(result, null, 2));
-console.log("\nNote: with no registered Self agent this run refuses at the Self gate (fail-closed).");
-console.log("Register an agent (Self app QR scan) and set SELF_AGENT_ID / SELF_AGENT_ADDRESS to proceed.");
+/** @ikenga/agent — the Ikenga team: the CFO loop, the market-report delivery, and the tool registry. */
+export { AgentRunner, decide, type AgentDecision, type RunJobDeps, type RunJobResult, type ToolCall, type FxObligation } from "./agent.js";
+export { runMarketReport, REPORT_MODEL_BUDGET_USD, REPORT_MAX_REVISIONS, type MarketReportResult, type ReportStep, type ReportSource, type RunReportInput, type RunReportDeps } from "./report.js";
+export {
+  chatFortyTwo,
+  resolveFortyTwoKey,
+  estimateCostUsd,
+  worstCaseCostUsd,
+  FORTYTWO_BASE_URL,
+  FORTYTWO_MODEL_WORK,
+  FORTYTWO_MODEL_AUDIT,
+  type FortyTwoReply,
+  type FortyTwoUsage,
+} from "./fortytwo.js";
+export { searchBing, searchWeb, searchWikipedia, fetchPageText, parseBingHtml, parseDuckDuckGoLite, type SearchResult, type SourcePage } from "./search.js";
+export { ToolRegistry, type ToolSeller } from "./tools.js";
+export { decideFx, bpsGap, type FxDecision } from "./fx.js";

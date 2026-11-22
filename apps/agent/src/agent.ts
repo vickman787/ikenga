@@ -27,6 +27,7 @@ import { priceJob, type JobType, type Quote } from "@ikenga/shared";
 import { verifySelfAgentId, type SelfVerificationResult } from "@ikenga/payments";
 import { MemoryLedger, type Ledger } from "@ikenga/ledger";
 import { decideFx, type FxDecision } from "./fx.js";
+import { runMarketReport, type MarketReportResult } from "./report.js";
 import { ToolRegistry } from "./tools.js";
 
 export interface AgentDecision {
@@ -115,8 +116,13 @@ export interface RunJobDeps {
   }>;
   /** Send cNGN to the named supplier. Defaults to not executed. */
   sendCngn?: (to: string, amountAtomic: string) => Promise<{ txHash: string }>;
-  /** Do the creative work. Default: labelled stub — money is real, work is not yet automated. */
-  doWork?: (jobType: JobType) => Promise<{ deliverable: string; note: string }>;
+  /**
+   * Do the creative work. Default: a market-report job is really done by
+   * the team (Scout, Researcher, Writer, Analyst, Auditor, on FortyTwo);
+   * every other job type is still a labelled stub until its own delivery
+   * is built.
+   */
+  doWork?: (jobType: JobType) => Promise<{ deliverable: string; note: string; report?: MarketReportResult }>;
   /** Clock override for tests (ISO). */
   now?: string;
 }
@@ -126,6 +132,8 @@ export interface RunJobResult {
   fxDecision?: FxDecision;
   toolPayments: { service: string; status: string; txHash?: string }[];
   cngnPayoutTxHash?: string;
+  /** The delivered work, when the job type has a real delivery (market-report). */
+  report?: MarketReportResult;
 }
 
 export class AgentRunner {
@@ -161,6 +169,8 @@ export class AgentRunner {
       agentId: string;
       agentAddress: string;
       orderId: string;
+      /** The customer's brief, as typed in the Hire form. */
+      description?: string;
       obligation?: FxObligation;
       toolCalls?: ToolCall[];
     },
@@ -198,11 +208,42 @@ export class AgentRunner {
       return { decision, toolPayments: [] };
     }
 
-    // Work (Step 2: labelled stub — the money path is real, the creative
-    // work is not yet automated; the ledger and UI say so honestly).
+    // Work: a market-report job is really done by the team; every other
+    // job type is still a labelled stub until its own delivery is built.
+    let report: MarketReportResult | undefined;
     const work = deps.doWork
       ? await deps.doWork(input.jobType)
-      : { deliverable: "", note: "work-stubbed: deliverable not yet automated in Step 2 — money path only" };
+      : input.jobType === "market-report" && process.env.FORTYTWO_API_KEY
+        ? await (async () => {
+            const r = await runMarketReport({ brief: input.description ?? "Market report" });
+            report = r;
+            return {
+              deliverable: r.report,
+              note:
+                r.status === "delivered"
+                  ? `Market report delivered — ${r.steps.length} steps, ${r.sources.length} sources, about $${r.totalCostUsd.toFixed(4)} of AI time.`
+                  : `Market report could not be delivered: ${r.reason ?? "no reason given"}`,
+              report: r,
+            };
+          })()
+        : {
+            deliverable: "",
+            note:
+              input.jobType === "market-report"
+                ? "Market report is ready to be done, but the AI is not connected yet — no key on the server."
+                : "work-stubbed: deliverable not yet automated — money path only",
+          };
+    if (work.report) report = work.report;
+    if (report) {
+      for (const step of report.steps) {
+        await this.log(
+          input.orderId,
+          "quote",
+          `${step.agent}: ${step.what}${step.costUsd !== undefined ? ` (about $${step.costUsd.toFixed(4)} of AI time)` : ""}`,
+          Math.round((step.costUsd ?? 0) * 1_000_000),
+        );
+      }
+    }
     await this.log(input.orderId, "quote", `Work: ${work.note}`, 0);
 
     // Tool payments via x402, pinned payees only, no-double-pay.
@@ -282,6 +323,6 @@ export class AgentRunner {
       }
     }
 
-    return { decision, fxDecision, toolPayments, cngnPayoutTxHash };
+    return { decision, fxDecision, toolPayments, cngnPayoutTxHash, report };
   }
 }

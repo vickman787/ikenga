@@ -91,6 +91,37 @@ describe("AgentRunner.runJob()", () => {
     expect(await ledger.verifyOrderChain("ord_run_2")).toBe(true);
   });
 
+  it("attaches a market report from doWork and logs each agent step", async () => {
+    const ledger = new MemoryLedger();
+    const runner = new AgentRunner(ledger);
+    const fakeReport = {
+      report: "# Report\n\nPaystack charges 1.5%.",
+      sources: [{ title: "Paystack", url: "https://example.com/paystack" }],
+      steps: [
+        { agent: "Scout" as const, what: "Found the sources.", detail: "", costUsd: 0 },
+        { agent: "Writer" as const, what: "Wrote the report.", detail: "", model: "nvidia/nemotron-3.5-super-vl", tokens: 100, costUsd: 0.001 },
+      ],
+      totalTokens: 100,
+      totalCostUsd: 0.001,
+      status: "delivered" as const,
+      revisions: 0,
+    };
+    const result = await runner.runJob(
+      { ...base, orderId: "ord_run_4", description: "Compare payment options" },
+      {
+        verifySelf: async () => verifiedSelf(),
+        doWork: async () => ({ deliverable: fakeReport.report, note: "Market report delivered.", report: fakeReport }),
+      },
+    );
+    expect(result.decision.action).toBe("proceed");
+    expect(result.report?.status).toBe("delivered");
+    expect(result.report?.sources).toHaveLength(1);
+    const decisions = await ledger.listDecisions("ord_run_4");
+    expect(decisions.some((d) => d.reason.includes("Scout: Found the sources."))).toBe(true);
+    expect(decisions.some((d) => d.reason.includes("Writer: Wrote the report."))).toBe(true);
+    expect(await ledger.verifyOrderChain("ord_run_4")).toBe(true);
+  });
+
   it("never retries an ambiguous tool payment", async () => {
     const ledger = new MemoryLedger();
     const runner = new AgentRunner(ledger);
