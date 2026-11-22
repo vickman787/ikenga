@@ -75,17 +75,22 @@ export async function getLedger(): Promise<Ledger> {
     ledgerInit = (async (): Promise<Ledger> => {
       if (process.env.DATABASE_URL) {
         // Supabase's pooler presents a cert chain Node's default trust store
-        // rejects ("self-signed certificate in certificate chain"). pg maps
-        // sslmode=require to ssl:true, which still verifies — so when the URL
-        // asks for SSL, pass rejectUnauthorized:false explicitly (the pooler
-        // is still encrypted; we just don't verify its CA). Local Postgres
-        // URLs carry no sslmode and stay untouched.
-        const needsSsl = /sslmode=(require|prefer|verify-ca|verify-full)/.test(
-          process.env.DATABASE_URL,
-        );
+        // rejects ("self-signed certificate in certificate chain"). pg's
+        // ConnectionParameters does Object.assign(config, parse(url)), so a
+        // sslmode=require in the URL overwrites any ssl object passed in
+        // code — passing ssl:{rejectUnauthorized:false} alone does NOT work
+        // (verified: it normalises to ssl={} and still verifies). So strip
+        // sslmode out of the URL and pass the ssl option explicitly. The
+        // pooler is still encrypted; we just don't verify its CA. Local
+        // Postgres URLs carry no sslmode and stay untouched.
+        const dbUrl = new URL(process.env.DATABASE_URL);
+        const sslMode = dbUrl.searchParams.get("sslmode");
+        dbUrl.searchParams.delete("sslmode");
         const pool = new Pool({
-          connectionString: process.env.DATABASE_URL,
-          ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+          connectionString: dbUrl.toString(),
+          ...(sslMode && sslMode !== "disable"
+            ? { ssl: { rejectUnauthorized: false } }
+            : {}),
         });
         const pg = new PostgresLedger(pool as never);
         await pg.init();
