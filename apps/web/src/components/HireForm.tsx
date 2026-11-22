@@ -121,8 +121,8 @@ export default function HireForm() {
           {busy ? "Checking with the CFO…" : "Hire Ikenga — $1"}
         </button>
         <p className="note" style={{ textAlign: "center" }}>
-          No money moves yet — this saves your job here so you can see the
-          price and the CFO&apos;s decision.
+          Your money stays with you for now — this saves your job here so
+          you can see the price and the CFO&apos;s decision.
         </p>
       </form>
 
