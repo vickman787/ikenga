@@ -140,6 +140,13 @@ p {
   font-size: 17px;
   font-weight: 700;
 }
+.nav__mark-img {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  object-fit: cover;
+  display: block;
+}
 .nav__links {
   display: flex;
   gap: 4px;

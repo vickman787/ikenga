@@ -11,6 +11,10 @@ export const metadata: Metadata = {
   title: "Ikenga · Your business's AI team, every job $1",
   description:
     "Ikenga is your business's AI team: $1 jobs for Nigerian small businesses on Celo. Your money waits in escrow until you accept the work, and an AI CFO runs it.",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/apple-icon.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

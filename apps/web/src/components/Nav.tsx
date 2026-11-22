@@ -58,7 +58,7 @@ export default function Nav() {
     <header className={`nav${scrolled ? " scrolled" : ""}${menu ? " open" : ""}`}>
       <div className="nav__bar">
         <a href="#top" className="nav__logo" aria-label="Ikenga home">
-          <span className="nav__mark">I</span> Ikenga
+          <img src="/logo-mark.png" alt="" className="nav__mark-img" width={34} height={34} /> Ikenga
         </a>
         <nav className="nav__links" aria-label="Sections">
           {LINKS.map(([href, label]) => (

@@ -780,7 +780,7 @@ export default function Home() {
         <div className="wrap footer__inner">
           <div className="foot-brand">
             <a href="#top" className="nav__logo">
-              <span className="nav__mark">I</span> Ikenga
+              <img src="/logo-mark.png" alt="" className="nav__mark-img" width={34} height={34} /> Ikenga
             </a>
             <p style={{ marginTop: 12 }}>
               Your business&rsquo;s AI team: websites, flyers, promo videos and
