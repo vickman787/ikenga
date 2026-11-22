@@ -44,79 +44,97 @@ export default function HireForm() {
   }
 
   return (
-    <div className="rounded-2xl border border-[#f5c51833] bg-[#151524] p-6">
-      <h2 className="text-xl font-bold">Hire Ikenga</h2>
-      <p className="mt-1 text-sm text-[#9a9ab0]">
-        Every job costs $1. You pay into escrow and only pay if you accept the work.
-        If you reject it, you are refunded — plus a bond the CFO puts up.
+    <div className="card pad">
+      <span className="chip live">
+        <span className="dot" /> Hire Ikenga
+      </span>
+      <h2 style={{ fontSize: 24, marginTop: 14 }}>Every job costs $1.</h2>
+      <p style={{ marginTop: 8, color: "var(--ink-2)", lineHeight: 1.6 }}>
+        You pay into escrow and only pay if you accept the work. If you reject
+        it, you are refunded — plus a bond the CFO puts up.
       </p>
 
-      <form onSubmit={submit} className="mt-5 space-y-4">
+      <form onSubmit={submit} style={{ marginTop: 24, display: "grid", gap: 20 }}>
         <div>
-          <label className="block text-sm font-semibold">What do you need done?</label>
-          <div className="mt-2 grid grid-cols-2 gap-2">
+          <label className="field">
+            What do you need done?
+            <span className="hint">Pick a job — every job is $1.</span>
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
             {JOB_TYPES.map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setJobType(t)}
-                className={`rounded-lg border px-3 py-2 text-left text-sm ${
-                  jobType === t
-                    ? "border-[#f5c518] bg-[#f5c51822] text-[#f5c518]"
-                    : "border-[#ffffff22] text-[#f8f7ff]"
-                }`}
+                className={`job-pick ${jobType === t ? "on" : ""}`}
               >
-                {JOB_LABELS[t]} · $1
+                {JOB_LABELS[t]} <span className="price">· $1</span>
               </button>
             ))}
           </div>
         </div>
 
         <div>
-          <label htmlFor="description" className="block text-sm font-semibold">Describe the job</label>
+          <label htmlFor="description" className="field">
+            Describe the job
+            <span className="hint">Say what you need in a sentence.</span>
+          </label>
           <input
             id="description"
+            type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="e.g. A one-page website for my bakery in Yaba"
-            className="mt-1 w-full rounded-lg border border-[#ffffff22] bg-[#0b0b14] px-3 py-2 text-sm outline-none focus:border-[#f5c518]"
+            style={{ marginTop: 10 }}
           />
         </div>
 
         <div>
-          <label htmlFor="wallet" className="block text-sm font-semibold">Your Celo wallet address</label>
+          <label htmlFor="wallet" className="field">
+            Your Celo wallet address
+            <span className="hint">Only the paying wallet can accept or reject the work.</span>
+          </label>
           <input
             id="wallet"
+            type="text"
             value={wallet}
             onChange={(e) => setWallet(e.target.value)}
             placeholder="0x…"
-            className="mt-1 w-full rounded-lg border border-[#ffffff22] bg-[#0b0b14] px-3 py-2 text-sm outline-none focus:border-[#f5c518]"
+            style={{ marginTop: 10 }}
           />
-          <p className="mt-1 text-xs text-[#9a9ab0]">Only the paying wallet can accept or reject the work.</p>
         </div>
 
-        {error && <p className="rounded-lg bg-[#ef444422] px-3 py-2 text-sm text-[#fca5a5]">{error}</p>}
+        {error && <p className="error">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded-lg bg-[#f5c518] px-4 py-3 font-bold text-black disabled:opacity-50"
-        >
+        <button type="submit" disabled={busy} className="btn leaf lg block">
           {busy ? "Asking the CFO…" : "Hire Ikenga — $1"}
         </button>
-        <p className="text-center text-xs text-[#9a9ab0]">
-          Step 1 demo: your job is stored in this server&apos;s memory only. No money moves.
+        <p className="note" style={{ textAlign: "center" }}>
+          Step 1 demo: your job is stored in this server&apos;s memory only. No
+          money moves.
         </p>
       </form>
 
       {result && (
-        <div className="mt-5 rounded-lg border border-[#22c55e55] bg-[#22c55e11] p-4 text-sm">
-          <p className="font-bold text-[#4ade80]">Job created — {result.id}</p>
-          <p className="mt-1">
-            {JOB_LABELS[result.jobType]} · ${result.priceUsdc} · CFO bond ${result.bondUsdc}
+        <div
+          style={{
+            marginTop: 20,
+            borderRadius: 12,
+            border: "1px solid #cfe6bc",
+            background: "var(--accent-soft)",
+            padding: 16,
+            fontSize: 14.5,
+          }}
+        >
+          <p style={{ fontWeight: 700, color: "var(--accent-ink)" }}>
+            Job created — {result.id}
           </p>
-          <p className="mt-1 text-[#9a9ab0]">{result.cfoReason}</p>
-          <p className="mt-2 break-all text-xs text-[#9a9ab0]">
+          <p style={{ marginTop: 6 }}>
+            {JOB_LABELS[result.jobType]} · ${result.priceUsdc} · CFO bond $
+            {result.bondUsdc}
+          </p>
+          <p style={{ marginTop: 6, color: "var(--ink-2)" }}>{result.cfoReason}</p>
+          <p className="mono" style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", wordBreak: "break-all" }}>
             CFO decision hash: {result.decisionHash}
           </p>
         </div>
