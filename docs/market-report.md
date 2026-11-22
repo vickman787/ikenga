@@ -1,8 +1,10 @@
 # Market report — how the first real Ikenga job works
 
-The market report is the one job type the team can actually do end to end.
-Everything else (website, promo video, flyers) is still a labelled stub:
-the money path is real, the creative work is not wired up yet.
+The market report was the first job the team could do end to end. The
+other three jobs are real now too — the website, the flyers, and the
+promo video (see "The creative jobs" below). All four run through the
+same loop: hire → the team works in short stages → delivered → accept,
+one free revision, or turn it down.
 
 ## The team
 
@@ -34,6 +36,28 @@ the brief, and drops the rest. Every fact in a report comes from a page
 Scout actually read, and the report lists its sources. If a price is not
 in the sources, the report says "price not listed" — it never invents one.
 
+## The creative jobs — website, flyers, promo video
+
+Same loop, different hands (`apps/agent/src/creative.ts`, same $0.50
+model cap per job, same one-free-revision rule):
+
+| Agent | Job | Model |
+| --- | --- | --- |
+| Designer | Reads the brief, pulls out the facts (business, services, prices, contact), then builds the one-page website or the printable flyer | Nemotron 3.5 Super VL |
+| Producer | Reads the brief and puts the promo slideshow together — 5 slides of the business's own words | Nemotron 3.5 Super VL |
+| Analyst | Checks every word, price and phone number against the brief | Nemotron 3.5 Super VL |
+| Auditor | Reads the work on a different model and passes it or sends it back once | Qwen3.8-27B |
+
+A creative job costs a few cents (a website is roughly $0.01–0.02).
+Prices come from the brief or are shown as "price not listed" — never
+invented. The website and flyer are model-written HTML: `sanitizeHtml`
+strips scripts, frames, forms, pictures and event handlers before
+anything is stored, and the job page still shows the page in a
+sandboxed frame with scripts switched off. The promo is honestly a
+**motion slideshow** — moving slides with play/pause — not a video
+file: no video file is made, and none is pretended. The full page lives
+at `/jobs/[id]/site`.
+
 ## The money
 
 The $1 price, the $0.10 bond and the CFO decision flow are unchanged.
@@ -45,27 +69,30 @@ identity check is still pending and the team can write but cannot be paid.
 
 ## The routes
 
-- `POST /api/jobs/[id]/run` — starts the team (market-report only).
+- `POST /api/jobs/[id]/run` — starts the team (all four job types).
   Needs `FORTYTWO_API_KEY` on the server, or it says plainly that the AI
-  is not connected yet. A run takes about 90–100 seconds.
+  is not connected yet. Answers straight away (202) with the next stage.
+- `POST /api/jobs/[id]/run/step` — runs ONE stage (under 60s). The job
+  page calls it until the work is delivered. A whole job takes about
+  90–150 seconds across 4–5 stages.
 - `POST /api/jobs/[id]/decision` — `{ action: "accept" | "reject" }`.
   Accept records the customer is happy; reject records a refund of the
   $1 plus the $0.10 bond.
-- `GET /api/jobs/[id]` — now includes the report, its steps, sources
+- `GET /api/jobs/[id]` — now includes the delivery, its steps, sources
   and cost.
 - `/jobs/[id]` — shows "Who did what" (each agent, what it did, its
-  model and cost), the report, its sources, and Accept / Ask for one
+  model and cost), the delivered work, and Accept / Ask for one
   free revision / Turn it down.
+- `/jobs/[id]/site` — the delivered website or flyer on its own page.
 
 ## Known limits
 
-- A run takes ~100 seconds, longer than the 60-second limit on Vercel's
-  free plan — the route asks for 300 seconds, which needs a paid Vercel
-  plan to actually run live. Until then a live hire may time out.
 - The live site needs `FORTYTWO_API_KEY` set in Vercel Production
   before any hire can run there.
 - Prices/fees rarely appear in the free sources Scout can read, so
   reports usually say "price not listed" for fees — provider pricing
   pages or a paid search API would fix that.
-- The team works from server memory unless `DATABASE_URL` is set, so
-  jobs and reports are lost when the server restarts.
+- Jobs and deliveries live in Postgres when `DATABASE_URL` is set, in
+  memory otherwise — on the live site today, a job made before the
+  database is connected may be gone after a restart.
+- The promo is a motion slideshow, not a video file.

@@ -48,15 +48,20 @@ production server 200 with `/api/cfo`, `/api/traction`, `/api/jobs/[id]` live.
 - ✅ Ledger stores full entry text and verifies from it; `reconcile()` settles
   only with a tx hash. Agent loop is real (price → Self gate → work → x402
   → FX leg → cNGN payout).
-- ✅ **The market report is the first real job.** Scout searches the web for
-  free (Bing first, Wikipedia backup), Researcher plans, Writer writes, and
-  Analyst checks the numbers — all on FortyTwo's Nemotron 3.5 Super VL —
-  then the Auditor reads it on a different model, Qwen3.8-27B. A real report
-  costs about $0.01 (sample: 16,696 tokens, $0.0097, 0 revisions, Auditor
-  passed first time). The job page shows who did what, the report, its
-  sources, and accept / one free revision / turn it down. The other job
-  types are still labelled stubs. See `docs/market-report.md`. Needs
-  `FORTYTWO_API_KEY` on the server.
+- ✅ **All four jobs are real now.** The market report (Scout searches
+  the web for free — Bing first, Wikipedia backup — Researcher plans,
+  Writer writes, Analyst checks the numbers, all on FortyTwo's Nemotron
+  3.5 Super VL, then the Auditor reads it on a different model,
+  Qwen3.8-27B) plus the website and flyers (Designer builds a real page
+  from the brief, Analyst checks every word and price against it,
+  Auditor reads it) and the promo video (Producer puts a motion
+  slideshow together — moving slides, honestly labelled, not a video
+  file). A real job costs about $0.01–0.02 (sample report: 16,696
+  tokens, $0.0097, 0 revisions, Auditor passed first time). The job
+  page shows who did what, the delivered work, and accept / one free
+  revision / turn it down. The website and flyer pages are shown in a
+  sandboxed frame with scripts switched off. See
+  `docs/market-report.md`. Needs `FORTYTWO_API_KEY` on the server.
 - 🛑 **Blocked — needs the user:** named real user + obligation; Self
   registration (human QR scan + passport/ID); funded test wallet +
   `X402_API_KEY`; attribution tag from Loops registration; Sepolia deploy.

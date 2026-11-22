@@ -44,7 +44,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "How fast is it?",
-    a: "You see the price and the CFO's decision straight away on your job page. The work itself takes a few minutes to a few hours — the first jobs are finished by the team and shown to you before you accept. The creative work is not fully automatic yet, and we would rather say that plainly than pretend otherwise.",
+    a: "You see the price and the CFO's decision straight away on your job page. The work itself takes a few minutes — the team does all four jobs now: a website, a flyer and price list, a promo slideshow, and a market report. You can follow every step on your job page before you accept.",
   },
   {
     q: "Is it really $1?",

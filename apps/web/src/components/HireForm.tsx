@@ -15,6 +15,14 @@ interface HireResult {
   decisionHash: string;
 }
 
+/** One example brief per job type, so the customer knows what to write. */
+const DESCRIPTION_PLACEHOLDERS: Record<JobType, string> = {
+  website: "e.g. A one-page website for my bakery in Yaba — bread, cakes and small chops, WhatsApp 0803…",
+  "promo-video": "e.g. A short promo for my food stall in Lekki — jollof rice ₦2,500, small chops, WhatsApp 0803…",
+  flyers: "e.g. A flyer for my salon in Ikeja — braids ₦15,000, cornrows ₦8,000, call 0805…",
+  "market-report": "e.g. Compare payment options for my shop in Lagos — Paystack, Flutterwave, Moniepoint",
+};
+
 export default function HireForm() {
   const [jobType, setJobType] = useState<JobType>("website");
   const [description, setDescription] = useState("");
@@ -95,7 +103,7 @@ export default function HireForm() {
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="e.g. A one-page website for my bakery in Yaba"
+            placeholder={DESCRIPTION_PLACEHOLDERS[jobType]}
             style={{ marginTop: 10 }}
           />
         </div>

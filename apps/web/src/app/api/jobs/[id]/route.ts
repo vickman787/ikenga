@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { reportStageLabel } from "@ikenga/agent";
+import { deliveryStageLabel } from "@/lib/jobs";
 import { getHire, getLedger, getReport, ledgerBackend } from "@/lib/jobs";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -17,7 +17,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     job: hire,
     report,
     // Plain-words label for what the team is doing right now, if anything.
-    nextStep: report && report.status === "in-progress" ? reportStageLabel(report.stage) : null,
+    nextStep: report && report.status === "in-progress" ? deliveryStageLabel(hire.jobType, report.stage) : null,
     backend: ledgerBackend(),
     order,
     decisions: decisions.map((d) => ({

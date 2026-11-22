@@ -24,7 +24,13 @@ import {
   type LedgerOrder,
   type StoredReportData,
 } from "@ikenga/ledger";
-import type { ReportProgress } from "@ikenga/agent";
+import type { CreativeJobType, CreativeProgress, ReportProgress } from "@ikenga/agent";
+import { creativeStageLabel, reportStageLabel } from "@ikenga/agent";
+
+/** Plain-words label for what the team is doing right now, for any job type. */
+export function deliveryStageLabel(jobType: JobType, stage: number): string {
+  return jobType === "market-report" ? reportStageLabel(stage) : creativeStageLabel(stage, jobType as CreativeJobType);
+}
 
 export const HireInputSchema = z.object({
   jobType: z.enum(JOB_TYPES),
@@ -144,7 +150,9 @@ export function reportToProgress(report: StoredReport, brief: string): ReportPro
     plan: report.plan ?? "",
     report: report.report,
     checkText: report.checkText ?? "",
-    steps: report.steps,
+    // A stored report only ever carries report agents; the stored
+    // shape widened to cover creative agents too.
+    steps: report.steps as ReportProgress["steps"],
     sources: report.sources,
     totalTokens: report.totalTokens,
     totalCostUsd: report.totalCostUsd,
@@ -190,6 +198,73 @@ export function emptyStoredReport(): StoredReport {
     pages: [],
     plan: "",
     checkText: "",
+  };
+}
+
+/** The creative job type behind a stored delivery, from the hire. */
+export function deliverableKindFor(jobType: JobType): "report" | "website" | "flyer" | "slideshow" {
+  return jobType === "market-report" ? "report" : jobType === "website" ? "website" : jobType === "flyers" ? "flyer" : "slideshow";
+}
+
+/** A fresh, not-yet-started creative delivery for a hire. */
+export function emptyStoredCreative(jobType: JobType): StoredReport {
+  return {
+    report: "",
+    sources: [],
+    steps: [],
+    totalTokens: 0,
+    totalCostUsd: 0,
+    status: "in-progress",
+    revisions: 0,
+    deliveredAt: "",
+    stage: 1,
+    checkText: "",
+    deliverableKind: deliverableKindFor(jobType),
+    html: "",
+    slides: [],
+  };
+}
+
+/** A saved creative delivery as the staged runner's progress (the brief comes from the hire). */
+export function creativeToProgress(report: StoredReport, brief: string, jobType: CreativeJobType): CreativeProgress {
+  return {
+    stage: report.stage,
+    jobType,
+    brief,
+    revisionNote: report.revisionNote,
+    facts: report.facts ?? null,
+    html: report.html ?? "",
+    slides: report.slides ?? [],
+    checkText: report.checkText ?? "",
+    steps: (report.steps as CreativeProgress["steps"]) ?? [],
+    totalTokens: report.totalTokens,
+    totalCostUsd: report.totalCostUsd,
+    revisions: report.revisions,
+    status: report.status,
+    reason: report.reason,
+    deliveredAt: report.deliveredAt,
+  };
+}
+
+/** The staged runner's progress as a saved creative delivery. */
+export function progressToCreative(progress: CreativeProgress): StoredReport {
+  return {
+    report: "",
+    sources: [],
+    steps: progress.steps,
+    totalTokens: progress.totalTokens,
+    totalCostUsd: progress.totalCostUsd,
+    status: progress.status,
+    reason: progress.reason,
+    revisions: progress.revisions,
+    deliveredAt: progress.deliveredAt,
+    stage: progress.stage,
+    checkText: progress.checkText,
+    revisionNote: progress.revisionNote,
+    deliverableKind: deliverableKindFor(progress.jobType),
+    html: progress.html,
+    slides: progress.slides,
+    facts: progress.facts ?? undefined,
   };
 }
 

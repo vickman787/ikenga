@@ -51,7 +51,7 @@ export interface LedgerOrder {
 export interface StoredReportData {
   report: string;
   sources: { title: string; url: string }[];
-  steps: { agent: "Scout" | "Researcher" | "Writer" | "Analyst" | "Auditor"; what: string; detail: string; model?: string; tokens?: number; costUsd?: number }[];
+  steps: { agent: "Scout" | "Researcher" | "Writer" | "Analyst" | "Auditor" | "Designer" | "Producer"; what: string; detail: string; model?: string; tokens?: number; costUsd?: number }[];
   totalTokens: number;
   totalCostUsd: number;
   status: "delivered" | "refused" | "in-progress";
@@ -64,6 +64,22 @@ export interface StoredReportData {
   plan?: string;
   checkText?: string;
   revisionNote?: string;
+  /** What kind of work this delivery is (a market report keeps "report"). */
+  deliverableKind?: "report" | "website" | "flyer" | "slideshow";
+  /** The generated website / flyer page (sanitised HTML). Empty for a slideshow. */
+  html?: string;
+  /** The promo slideshow: one card per slide. Empty for a website / flyer. */
+  slides?: { title: string; text: string }[];
+  /** Facts Designer / Producer read out of the brief (creative jobs). */
+  facts?: {
+    businessName: string;
+    whatItDoes: string;
+    services: string[];
+    prices: { item: string; price: string; listed: boolean }[];
+    contact: string;
+    colours: string;
+    notes: string;
+  };
 }
 
 export interface LedgerDecision {

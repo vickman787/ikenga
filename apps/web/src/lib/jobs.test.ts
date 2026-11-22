@@ -3,11 +3,16 @@ import { Pool } from "pg";
 import { MemoryLedger, PostgresLedger } from "@ikenga/ledger";
 import {
   createHire,
+  creativeToProgress,
+  deliverableKindFor,
+  deliveryStageLabel,
+  emptyStoredCreative,
   ESTIMATED_TOOL_COST_USDC,
   getHire,
   getReport,
   HireInputSchema,
   listHires,
+  progressToCreative,
   setHireStatus,
   setLedgerForTests,
   setReport,
@@ -116,5 +121,65 @@ describe.skipIf(!PG_URL)("Postgres hire/report round-trip (gated: IKENGA_TEST_DA
       await poolA.end();
       setLedgerForTests(new MemoryLedger());
     }
+  });
+});
+
+describe("creative deliveries (website / flyers / promo video)", () => {
+  it("an empty creative delivery starts at stage 1 with the right kind", () => {
+    expect(emptyStoredCreative("website").deliverableKind).toBe("website");
+    expect(emptyStoredCreative("flyers").deliverableKind).toBe("flyer");
+    expect(emptyStoredCreative("promo-video").deliverableKind).toBe("slideshow");
+    expect(emptyStoredCreative("website").stage).toBe(1);
+    expect(emptyStoredCreative("website").status).toBe("in-progress");
+    expect(deliverableKindFor("market-report")).toBe("report");
+  });
+
+  it("stage labels name the right team for each job type", () => {
+    expect(deliveryStageLabel("website", 2)).toMatch(/Designer is building your website/);
+    expect(deliveryStageLabel("flyers", 2)).toMatch(/Designer is making your flyer/);
+    expect(deliveryStageLabel("promo-video", 2)).toMatch(/Producer is putting your slideshow together/);
+    expect(deliveryStageLabel("market-report", 1)).toMatch(/Scout is looking the market up/);
+  });
+
+  it("creative progress survives a round-trip through the stored delivery", async () => {
+    const hire = await createHire({
+      jobType: "website",
+      description: "A site for Ada's Kitchen",
+      customerWallet: "0x0000000000000000000000000000000000000005",
+    });
+    const stored = emptyStoredCreative("website");
+    stored.html = "<html><body><h1>Ada's Kitchen</h1></body></html>";
+    stored.stage = 3;
+    stored.steps = [{ agent: "Designer", what: "Read the brief.", detail: "" }];
+    stored.facts = {
+      businessName: "Ada's Kitchen",
+      whatItDoes: "Home cooking in Lekki",
+      services: ["Jollof rice"],
+      prices: [{ item: "Jollof rice", price: "₦2,500", listed: true }],
+      contact: "WhatsApp 0803 123 4567",
+      colours: "",
+      notes: "",
+    };
+    await setReport(hire.id, stored);
+    const back = await getReport(hire.id);
+    expect(back?.html).toContain("Ada's Kitchen");
+    expect(back?.facts?.businessName).toBe("Ada's Kitchen");
+    // The staged runner can pick it up again from the stored shape.
+    const progress = creativeToProgress(back!, hire.description, "website");
+    expect(progress.stage).toBe(3);
+    expect(progress.facts?.businessName).toBe("Ada's Kitchen");
+    expect(progressToCreative(progress).html).toContain("Ada's Kitchen");
+    expect(progressToCreative(progress).deliverableKind).toBe("website");
+  });
+
+  it("a slideshow delivery stores slides, not HTML", () => {
+    const stored = emptyStoredCreative("promo-video");
+    stored.slides = [{ title: "Real food", text: "Home cooking in Lekki." }];
+    stored.stage = 0;
+    stored.status = "delivered";
+    const progress = creativeToProgress(stored, "A promo for Ada's Kitchen", "promo-video");
+    expect(progress.slides).toHaveLength(1);
+    expect(progress.html).toBe("");
+    expect(progressToCreative(progress).slides?.[0].title).toBe("Real food");
   });
 });

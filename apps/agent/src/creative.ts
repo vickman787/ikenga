@@ -1,0 +1,576 @@
+/**
+ * The creative jobs — the website, the flyers, and the promo video.
+ *
+ * Same team pattern as the market report, same money rules, different
+ * hands:
+ *   Designer — reads the brief and builds the website or the flyer.
+ *   Producer — reads the brief and puts the promo slideshow together.
+ *   Analyst  — checks every word, price and phone number against the
+ *              brief. A price that was not in the brief must be shown
+ *              as "price not listed" — never invented.
+ *   Auditor  — reads it on a DIFFERENT model and says pass or fix. If
+ *              it says fix, the work is revised once. One revision,
+ *              then it ships.
+ *
+ * Money rules (the CFO's rules, not the models'):
+ *   - A whole creative job may cost at most $0.50 of model time. A
+ *     normal job is a few cents. If the next call would push past the
+ *     cap, the job stops and says so instead of overspending.
+ *   - The weekly tool budget is 30 USDT and one move may be at most
+ *     5 USDT (the vault rules) — a $0.50 cap sits far inside both.
+ *   - No model ever touches money: models only write words and pages.
+ *     The price, the bond and the accept/reject decision stay with
+ *     the CFO.
+ *
+ * What each job delivers, honestly:
+ *   - Website: a real one-page website, written from the brief — the
+ *     business's own words, services and contact, in the Ikenga
+ *     colours. Shown on the job page in a locked-down frame, and on
+ *     its own page.
+ *   - Flyers: a real printable flyer / price list, written from the
+ *     brief, with a print button. Prices come from the brief or are
+ *     labelled "price not listed".
+ *   - Promo video: a motion slideshow — a sequence of slides with the
+ *     business's words and colours, moving on the job page with
+ *     play/pause. It is labelled a slideshow, NOT a video file:
+ *     no video file is made, and none is pretended.
+ *
+ * Safety: the website and flyer pages are model-written HTML. Before
+ * anything is stored, sanitizeHtml() strips scripts, frames, forms,
+ * pictures and anything that could run code or phone home. The job
+ * page still shows the page inside a sandboxed frame with scripts
+ * switched off, so even a page that slipped past the strip cannot run.
+ * The slideshow never touches model HTML at all — the slides are
+ * plain words, and our own page does the moving.
+ *
+ * Chunked runs: like the report, the work is split into short stages
+ * — read the brief, build it, check it, read it through (and a second
+ * read-through if the first one asked for fixes). Each stage is one
+ * request, saves its work, and says which stage is next.
+ * `runCreativeStage` runs one stage from saved progress;
+ * `runCreative` just runs the stages one after another, for the
+ * local command line and the tests. A customer's revision re-runs
+ * the build and read-through stages, reusing the facts already read
+ * out of the brief.
+ *
+ * The chat calls are injectable, so tests can run the whole flow
+ * with fakes and never spend a cent or touch the network.
+ */
+import {
+  FORTYTWO_MODEL_AUDIT,
+  FORTYTWO_MODEL_WORK,
+  approxTokens,
+  chatFortyTwo,
+  worstCaseCostUsd,
+  type FortyTwoReply,
+} from "./fortytwo.js";
+
+export const CREATIVE_MODEL_BUDGET_USD = 0.5;
+export const CREATIVE_MAX_REVISIONS = 1;
+
+/** Stage numbers. 0 means finished — the work is delivered or refused. */
+export const CREATIVE_STAGE_FACTS = 1;
+export const CREATIVE_STAGE_BUILD = 2;
+export const CREATIVE_STAGE_CHECK = 3;
+export const CREATIVE_STAGE_AUDIT = 4;
+export const CREATIVE_STAGE_REAUDIT = 5;
+
+export type CreativeJobType = "website" | "flyers" | "promo-video";
+
+/** Plain-words labels for each stage, for the job page. */
+export const CREATIVE_STAGE_LABELS: Record<CreativeJobType, Record<number, string>> = {
+  website: {
+    [CREATIVE_STAGE_FACTS]: "Designer is reading your brief",
+    [CREATIVE_STAGE_BUILD]: "Designer is building your website",
+    [CREATIVE_STAGE_CHECK]: "Analyst is checking every word against your brief",
+    [CREATIVE_STAGE_AUDIT]: "A different model is reading it before it reaches you",
+    [CREATIVE_STAGE_REAUDIT]: "Reading the revised website again",
+  },
+  flyers: {
+    [CREATIVE_STAGE_FACTS]: "Designer is reading your brief",
+    [CREATIVE_STAGE_BUILD]: "Designer is making your flyer",
+    [CREATIVE_STAGE_CHECK]: "Analyst is checking every price against your brief",
+    [CREATIVE_STAGE_AUDIT]: "A different model is reading it before it reaches you",
+    [CREATIVE_STAGE_REAUDIT]: "Reading the revised flyer again",
+  },
+  "promo-video": {
+    [CREATIVE_STAGE_FACTS]: "Producer is reading your brief",
+    [CREATIVE_STAGE_BUILD]: "Producer is putting your slideshow together",
+    [CREATIVE_STAGE_CHECK]: "Analyst is checking every word against your brief",
+    [CREATIVE_STAGE_AUDIT]: "A different model is reading it before it reaches you",
+    [CREATIVE_STAGE_REAUDIT]: "Reading the revised slideshow again",
+  },
+};
+
+export function creativeStageLabel(stage: number, jobType: CreativeJobType): string {
+  return CREATIVE_STAGE_LABELS[jobType]?.[stage] ?? "";
+}
+
+/** Who builds the work — the name the job page shows. */
+export const CREATIVE_BUILDER: Record<CreativeJobType, "Designer" | "Producer"> = {
+  website: "Designer",
+  flyers: "Designer",
+  "promo-video": "Producer",
+};
+
+export const CREATIVE_JOB_NOUN: Record<CreativeJobType, string> = {
+  website: "website",
+  flyers: "flyer",
+  "promo-video": "slideshow",
+};
+
+/** Facts read out of the brief. Only facts from the brief, never invented. */
+export interface CreativeFacts {
+  businessName: string;
+  whatItDoes: string;
+  services: string[];
+  prices: { item: string; price: string; listed: boolean }[];
+  contact: string;
+  colours: string;
+  notes: string;
+}
+
+export interface CreativeSlide {
+  title: string;
+  text: string;
+}
+
+export interface CreativeStep {
+  agent: "Designer" | "Producer" | "Writer" | "Analyst" | "Auditor";
+  what: string;
+  detail: string;
+  model?: string;
+  tokens?: number;
+  costUsd?: number;
+}
+
+export interface CreativeResult {
+  /** The website / flyer page (sanitised HTML). Empty for a slideshow. */
+  html: string;
+  /** The promo slideshow. Empty for a website / flyer. */
+  slides: CreativeSlide[];
+  facts: CreativeFacts | null;
+  steps: CreativeStep[];
+  totalTokens: number;
+  totalCostUsd: number;
+  /** "delivered" when the Auditor passed it (after at most one revision). */
+  status: "delivered" | "refused";
+  /** Plain-words reason when refused (e.g. budget, unreadable brief). */
+  reason?: string;
+  revisions: number;
+}
+
+/**
+ * Everything a chunked run has done so far, saved after each stage so
+ * the next stage can pick it up — even on another server. `stage` is
+ * the next stage to run; 0 means the work is delivered or refused.
+ */
+export interface CreativeProgress {
+  stage: number;
+  jobType: CreativeJobType;
+  brief: string;
+  revisionNote?: string;
+  facts: CreativeFacts | null;
+  html: string;
+  slides: CreativeSlide[];
+  checkText: string;
+  steps: CreativeStep[];
+  totalTokens: number;
+  totalCostUsd: number;
+  revisions: number;
+  status: "in-progress" | "delivered" | "refused";
+  reason?: string;
+  deliveredAt: string;
+}
+
+export function emptyCreativeProgress(brief: string, jobType: CreativeJobType, revisionNote?: string): CreativeProgress {
+  return {
+    stage: CREATIVE_STAGE_FACTS,
+    jobType,
+    brief: brief.trim(),
+    revisionNote,
+    facts: null,
+    html: "",
+    slides: [],
+    checkText: "",
+    steps: [],
+    totalTokens: 0,
+    totalCostUsd: 0,
+    revisions: 0,
+    status: "in-progress",
+    deliveredAt: "",
+  };
+}
+
+/** A revision starts again at the build stage, reusing the facts already read. */
+export function creativeRevisionProgress(previous: CreativeProgress, revisionNote: string): CreativeProgress {
+  return {
+    ...emptyCreativeProgress(previous.brief, previous.jobType, revisionNote),
+    stage: CREATIVE_STAGE_BUILD,
+    facts: previous.facts,
+    // The old work stays on the page until the new one is built.
+    html: previous.html,
+    slides: previous.slides,
+  };
+}
+
+export function creativeProgressToResult(p: CreativeProgress): CreativeResult {
+  return {
+    html: p.status === "delivered" ? p.html : "",
+    slides: p.status === "delivered" ? p.slides : [],
+    facts: p.facts,
+    steps: p.steps,
+    totalTokens: p.totalTokens,
+    totalCostUsd: p.totalCostUsd,
+    status: p.status === "delivered" ? "delivered" : "refused",
+    reason: p.reason,
+    revisions: p.revisions,
+  };
+}
+
+export interface RunCreativeDeps {
+  chat?: (input: { model: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; maxTokens?: number; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }) => Promise<FortyTwoReply>;
+  /** Extra instructions from the customer ("ask for one free revision"). */
+  revisionNote?: string;
+  /** Facts already read (a revision reuses them — no new read). */
+  existingFacts?: CreativeFacts | null;
+}
+
+export interface RunCreativeInput {
+  /** The customer's brief, as typed in the Hire form. */
+  brief: string;
+  jobType: CreativeJobType;
+}
+
+function stripCodeFences(text: string): string {
+  return text.replace(/^```[a-z]*\n?/gim, "").replace(/```$/gm, "").trim();
+}
+
+/** Pull the first JSON object out of a model reply (fences or no fences). */
+function extractJsonObject(text: string): string | null {
+  const clean = stripCodeFences(text);
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  return clean.slice(start, end + 1);
+}
+
+function factsText(facts: CreativeFacts): string {
+  const lines = [
+    `Business: ${facts.businessName || "(not named in the brief)"}`,
+    `What it does: ${facts.whatItDoes}`,
+    `Services / offers: ${facts.services.length > 0 ? facts.services.join("; ") : "(none given)"}`,
+    `Prices: ${
+      facts.prices.length > 0
+        ? facts.prices.map((p) => `${p.item} — ${p.listed ? p.price : "price not listed"}`).join("; ")
+        : "(none given)"
+    }`,
+    `Contact: ${facts.contact || "(none given)"}`,
+    `Colours / mood: ${facts.colours || "(none asked for — use the Ikenga colours)"}`,
+    `Other notes: ${facts.notes || "(none)"}`,
+  ];
+  return lines.join("\n");
+}
+
+function parseFacts(text: string): CreativeFacts | null {
+  const json = extractJsonObject(text);
+  if (!json) return null;
+  try {
+    const raw = JSON.parse(json) as Partial<CreativeFacts>;
+    if (typeof raw !== "object" || raw === null) return null;
+    return {
+      businessName: typeof raw.businessName === "string" ? raw.businessName.trim() : "",
+      whatItDoes: typeof raw.whatItDoes === "string" ? raw.whatItDoes.trim() : "",
+      services: Array.isArray(raw.services) ? raw.services.filter((s): s is string => typeof s === "string").map((s) => s.trim()).filter(Boolean) : [],
+      prices: Array.isArray(raw.prices)
+        ? raw.prices
+            .filter((p): p is { item: string; price: string; listed: boolean } => typeof p === "object" && p !== null && typeof (p as { item: unknown }).item === "string")
+            .map((p) => ({
+              item: String(p.item).trim(),
+              price: typeof p.price === "string" ? p.price.trim() : "price not listed",
+              listed: p.listed === true,
+            }))
+            .filter((p) => p.item.length > 0)
+        : [],
+      contact: typeof raw.contact === "string" ? raw.contact.trim() : "",
+      colours: typeof raw.colours === "string" ? raw.colours.trim() : "",
+      notes: typeof raw.notes === "string" ? raw.notes.trim() : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSlides(text: string): CreativeSlide[] | null {
+  const json = extractJsonObject(text);
+  if (!json) return null;
+  try {
+    const raw = JSON.parse(json) as { slides?: unknown };
+    if (!Array.isArray(raw.slides)) return null;
+    const slides = raw.slides
+      .filter((s): s is { title: string; text: string } => typeof s === "object" && s !== null && typeof (s as { title: unknown }).title === "string" && typeof (s as { text: unknown }).text === "string")
+      .map((s) => ({ title: s.title.trim(), text: s.text.trim() }))
+      .filter((s) => s.title.length > 0 && s.text.length > 0);
+    return slides.length >= 3 ? slides : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Strip anything that could run code or reach out from model-written
+ * HTML, before it is stored or shown. Scripts, frames, forms, pictures
+ * and plug-ins go entirely; event-handler attributes and javascript:
+ * links are cut. Inline <style> stays — it is what makes the page
+ * look finished — but it cannot run code. The page is still shown in
+ * a sandboxed frame with scripts switched off.
+ */
+export function sanitizeHtml(html: string): string {
+  let out = html;
+  out = out.replace(/<script[\s\S]*?<\/script\s*>/gi, "");
+  out = out.replace(/<style[\s\S]*?url\(\s*javascript:[^)]*\)[\s\S]*?<\/style\s*>/gi, "");
+  out = out.replace(/<\/?(iframe|object|embed|form|link|meta|base|title|noscript|template|slot|audio|video|input|button|select|textarea)\b[^>]*>/gi, "");
+  out = out.replace(/<img\b[^>]*>/gi, "");
+  out = out.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  out = out.replace(/(href|src|action)\s*=\s*("javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi, '$1="#"');
+  out = out.replace(/url\(\s*javascript:[^)]*\)/gi, "url(#)");
+  return out.trim();
+}
+
+function buildPrompt(jobType: CreativeJobType, facts: CreativeFacts, revisionNote?: string): string {
+  const palette =
+    "Use the Ikenga colours unless the brief asked for others: cream #FBF9F4 background, deep green #13271C for headings, leaf green #A3E36A for buttons and highlights, brass #C8902F for small accents.";
+  const rules = `Rules: every word on the page must come from the facts below or the brief — do not invent a service, a price, a phone number, an address or a claim. If a price was not in the brief, write "price not listed" — never guess a price. Write in plain, warm, human words — no jargon. No JavaScript, no external pictures, no forms — links only (phone, WhatsApp, maps). Style it fully with inline <style> so it looks finished on its own.`;
+  const briefFacts = factsText(facts);
+  if (jobType === "website") {
+    return `You are Designer, building a one-page website for a small business in Nigeria.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nBuild the whole website and return ONLY the HTML for one complete page (<!DOCTYPE html> to </html>). It must have: the business name big at the top, what it does in one or two plain sentences, its services, how to reach it (WhatsApp / phone / address as given), and its hours or location if given. ${palette}\n\n${rules}`;
+  }
+  if (jobType === "flyers") {
+    return `You are Designer, making a printable flyer and price list for a small business in Nigeria.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nBuild the flyer and return ONLY the HTML for one complete page (<!DOCTYPE html> to </html>). It must have: a big headline with the business name, what it does in one plain line, a price list (a table: item, price — write "price not listed" where the brief gave no price), and the contact big at the bottom so a customer can order from it. Make it fit on one printed A4 page (about 794px wide). ${palette}\n\n${rules}`;
+  }
+  return `You are Producer, putting together a motion slideshow for a small business in Nigeria — the words and pictures of a short promo, as moving slides.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nReturn JSON ONLY, in this shape: {"slides": [{"title": "...", "text": "..."}]}. Five slides: 1) the hook — the one line that makes someone stop; 2) what the business does; 3) the offer or services; 4) the prices (write "price not listed" where the brief gave no price); 5) how to order — the contact from the facts. Each slide: a title under 8 words, text under 25 words. Every word must come from the facts or the brief — do not invent a service, a price, a phone number or a claim. Write in plain, warm, human words.`;
+}
+
+function auditPrompt(jobType: CreativeJobType, facts: CreativeFacts, deliverable: string, checkText: string): string {
+  const noun = CREATIVE_JOB_NOUN[jobType];
+  return `You are Auditor, reading a ${noun} before it reaches the customer. You are a different model from the one that built it.\n\nThe ${noun}:\n${deliverable}\n\nThe numbers check:\n${checkText}\n\nThe facts from the brief (the only facts allowed):\n${factsText(facts)}\n\nAnswer with exactly one line first: PASS or FIX. Then, if FIX, say in plain words what is wrong and what must change. Only judge it against the facts — a word that is in the facts is fine, a word that is not is a problem. A price shown as "price not listed" is fine; a price that is not in the facts is a problem.`;
+}
+
+/**
+ * Run ONE stage of a creative job from saved progress, and return the
+ * updated progress (saved by the caller after each stage). A stage is
+ * short — at most two model calls — so it fits in a 60s request.
+ */
+export async function runCreativeStage(progress: CreativeProgress, deps: RunCreativeDeps = {}): Promise<CreativeProgress> {
+  const brief = progress.brief.trim();
+  const jobType = progress.jobType;
+  const builder = CREATIVE_BUILDER[jobType];
+  const noun = CREATIVE_JOB_NOUN[jobType];
+  const p: CreativeProgress = {
+    ...progress,
+    steps: [...progress.steps],
+    slides: [...progress.slides],
+  };
+  if (!brief) {
+    return { ...p, stage: 0, status: "refused", reason: "There was no brief to work from." };
+  }
+  if (p.status !== "in-progress" || p.stage === 0) return p;
+
+  const rawChat = deps.chat ?? (async (c) => chatFortyTwo(c));
+  /** One chat call; if the model answers with nothing (its thinking ate
+   * the token budget), try once more with twice the budget. */
+  const chat = async (c: Parameters<NonNullable<RunCreativeDeps["chat"]>>[0]): Promise<FortyTwoReply> => {
+    const first = await rawChat(c);
+    if (first.text.trim().length > 0) return first;
+    return rawChat({ ...c, maxTokens: (c.maxTokens ?? 1024) * 2 });
+  };
+
+  const charge = (reply: FortyTwoReply, agent: CreativeStep["agent"], what: string) => {
+    p.totalTokens += reply.usage.totalTokens;
+    p.totalCostUsd = Math.round((p.totalCostUsd + reply.costUsd) * 1_000_000) / 1_000_000;
+    p.steps.push({ agent, what, detail: "", model: reply.model, tokens: reply.usage.totalTokens, costUsd: reply.costUsd });
+  };
+
+  /** Refuse instead of overspending: check the worst case before each call. */
+  const withinBudget = (model: string, prompt: string, maxTokens: number): boolean =>
+    p.totalCostUsd + worstCaseCostUsd(model, approxTokens(prompt), maxTokens) <= CREATIVE_MODEL_BUDGET_USD;
+
+  /** Already spent too much (a call cost more than its worst case) — stop now. */
+  const overBudget = (): boolean => p.totalCostUsd > CREATIVE_MODEL_BUDGET_USD;
+
+  const refuse = (reason: string): CreativeProgress => ({
+    ...p, html: "", slides: [], stage: 0, status: "refused", reason, deliveredAt: new Date().toISOString(),
+  });
+  const deliver = (): CreativeProgress => ({
+    ...p, stage: 0, status: "delivered", deliveredAt: new Date().toISOString(),
+  });
+
+  // --- Stage 1: read the brief and pull out the facts. ---
+  if (p.stage === CREATIVE_STAGE_FACTS) {
+    if (p.facts) {
+      // A revision reuses the facts already read — no new read.
+      p.steps.push({
+        agent: builder,
+        what: `Read the brief again — ${p.facts.businessName ? `"${p.facts.businessName}"` : "the business"}: ${p.facts.whatItDoes || "what it does, its services and its contact"}.`,
+        detail: factsText(p.facts).slice(0, 400),
+      });
+      return { ...p, stage: CREATIVE_STAGE_BUILD };
+    }
+    const factsPrompt = `You are ${builder}, reading a customer's brief for a ${noun} for a small business in Nigeria.\n\nThe brief:\n${brief}\n\nReply with JSON ONLY, in this shape: {"businessName": "...", "whatItDoes": "...", "services": ["..."], "prices": [{"item": "...", "price": "...", "listed": true}], "contact": "...", "colours": "...", "notes": "..."}.\n\nRules: only use facts from the brief. If the brief does not name the business, leave businessName empty. If a price is not in the brief, do not list it as a price — either leave it out of prices or list it with listed: false and price: "price not listed". Never invent a business name, a price, a phone number, an address or a service. If the brief has no usable facts at all, reply with {"businessName": "", "whatItDoes": "", "services": [], "prices": [], "contact": "", "colours": "", "notes": "no usable facts in the brief"}.`;
+    if (!withinBudget(FORTYTWO_MODEL_WORK, factsPrompt, 800)) {
+      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
+    }
+    const read = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: factsPrompt }], maxTokens: 1200, reasoningEffort: "low" });
+    charge(read, builder, `Read the brief.`);
+    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
+    let facts = parseFacts(read.text);
+    if (!facts) {
+      // One retry: the model may have answered in words instead of JSON.
+      const retry = await chat({
+        model: FORTYTWO_MODEL_WORK,
+        messages: [{ role: "user", content: `${factsPrompt}\n\nReply with JSON only — no words before or after it.` }],
+        maxTokens: 1200,
+        reasoningEffort: "low",
+      });
+      charge(retry, builder, `Read the brief again — the first answer was not in a readable shape.`);
+      if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
+      facts = parseFacts(retry.text);
+    }
+    if (!facts) {
+      return refuse("The brief could not be read clearly — try a shorter brief with the business name, what it does, and how to reach it.");
+    }
+    p.facts = facts;
+    // The read step(s) above carry the cost; fill in what was read.
+    p.steps[p.steps.length - 1].what = `Read the brief — ${facts.businessName ? `"${facts.businessName}"` : "the business"}: ${facts.whatItDoes || "what it does, its services and its contact"}.`;
+    p.steps[p.steps.length - 1].detail = factsText(facts).slice(0, 400);
+    if (facts.businessName === "" && facts.whatItDoes === "" && facts.services.length === 0) {
+      return refuse("The brief did not say what the business is or what it does — try again with the business name, what it does, and how to reach it.");
+    }
+    return { ...p, stage: CREATIVE_STAGE_BUILD };
+  }
+
+  if (!p.facts) {
+    return refuse("The brief was not read yet — start the job again.");
+  }
+  const facts = p.facts;
+  const deliverableText = (): string =>
+    jobType === "promo-video" ? JSON.stringify({ slides: p.slides }, null, 2) : p.html;
+
+  // --- Stage 2: build the work from the facts. ---
+  if (p.stage === CREATIVE_STAGE_BUILD) {
+    const prompt = buildPrompt(jobType, facts, p.revisionNote);
+    const maxTokens = jobType === "promo-video" ? 1200 : 4000;
+    if (!withinBudget(FORTYTWO_MODEL_WORK, prompt, maxTokens)) {
+      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
+    }
+    const built = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: prompt }], maxTokens });
+    charge(built, builder, jobType === "promo-video" ? "Put the slideshow together from the brief." : `Built the ${noun} from the brief.`);
+    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
+    if (jobType === "promo-video") {
+      const slides = parseSlides(built.text);
+      if (!slides) {
+        return refuse("The slideshow did not come back in a readable shape — try the job again.");
+      }
+      p.slides = slides;
+      p.html = "";
+      p.steps[p.steps.length - 1].detail = `${slides.length} slides: ${slides.map((s) => s.title).join(" · ")}`.slice(0, 400);
+    } else {
+      const html = sanitizeHtml(stripCodeFences(built.text));
+      if (html.length < 120 || !/<(h1|h2)[\s>]/.test(html)) {
+        return refuse(`The ${noun} did not come back as a finished page — try the job again.`);
+      }
+      p.html = html;
+      p.slides = [];
+      p.steps[p.steps.length - 1].detail = `About ${html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length} words, built from your brief.`;
+    }
+    return { ...p, stage: CREATIVE_STAGE_CHECK };
+  }
+
+  // --- Stage 3, Analyst: check every word, price and number against the facts. ---
+  if (p.stage === CREATIVE_STAGE_CHECK) {
+    const checkPrompt = `You are Analyst, checking a ${noun} against the brief it was built from.\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts from the brief (the only facts allowed):\n${factsText(facts)}\n\nList every business name, service, price, phone number and address in the ${noun}, and for each one say whether it is in the facts or not. End with one line: either "ALL FACTS CHECK OUT" or "PROBLEMS:" followed by the list of words that could not be checked. Do not add new facts. A price shown as "price not listed" is fine.`;
+    if (!withinBudget(FORTYTWO_MODEL_WORK, checkPrompt, 800)) {
+      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
+    }
+    const check = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], maxTokens: 2000, reasoningEffort: "low" });
+    charge(check, "Analyst", `Checked every word, price and phone number against the brief.`);
+    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
+    p.checkText = stripCodeFences(check.text);
+    p.steps[p.steps.length - 1].detail = p.checkText.slice(-300);
+    return { ...p, stage: CREATIVE_STAGE_AUDIT };
+  }
+
+  // --- Stages 4 and 5, Auditor: a different model reads it and says pass or fix. ---
+  if (p.stage === CREATIVE_STAGE_AUDIT || p.stage === CREATIVE_STAGE_REAUDIT) {
+    const isReaudit = p.stage === CREATIVE_STAGE_REAUDIT;
+    const prompt = auditPrompt(jobType, facts, deliverableText(), p.checkText);
+    if (!withinBudget(FORTYTWO_MODEL_AUDIT, prompt, 600)) {
+      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
+    }
+    const audit = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 1500, reasoningEffort: "low" });
+    charge(audit, "Auditor", isReaudit ? `Read the revised ${noun} again.` : `Read the ${noun} on a different model, before it reaches you.`);
+    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
+    const auditText = stripCodeFences(audit.text);
+    p.steps[p.steps.length - 1].detail = auditText.slice(0, 400);
+    const verdict = auditText.replace(/^[^A-Za-z]+/, "");
+    if (/^PASS\b/i.test(verdict)) {
+      return deliver();
+    }
+    if (isReaudit) {
+      // One revision was already used. Ship it, but say so plainly.
+      p.steps.push({ agent: "Auditor", what: `Still had notes after one revision — the ${noun} is shown with them.`, detail: auditText.slice(0, 400) });
+      return deliver();
+    }
+    // One free revision: rebuild it, fixing what the Auditor flagged.
+    const fixPrompt =
+      jobType === "promo-video"
+        ? `You are Producer. The Auditor read your slideshow and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe slideshow:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn JSON ONLY, same shape as before: {"slides": [{"title": "...", "text": "..."}]}. Do not invent any fact.`
+        : `You are ${builder}. The Auditor read your ${noun} and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn the full corrected ${noun} as HTML, same shape as before. Do not invent any fact. No JavaScript, no external pictures, no forms.`;
+    const fixMaxTokens = jobType === "promo-video" ? 1200 : 4000;
+    if (!withinBudget(FORTYTWO_MODEL_WORK, fixPrompt, fixMaxTokens)) {
+      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
+    }
+    const fixed = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: fixMaxTokens });
+    charge(fixed, builder, `Revised the ${noun} once, fixing what the Auditor flagged.`);
+    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
+    if (jobType === "promo-video") {
+      const slides = parseSlides(fixed.text);
+      if (!slides) return refuse("The revised slideshow did not come back in a readable shape — try the job again.");
+      p.slides = slides;
+      p.steps[p.steps.length - 1].detail = `${slides.length} slides, revised.`;
+    } else {
+      const html = sanitizeHtml(stripCodeFences(fixed.text));
+      if (html.length < 120 || !/<(h1|h2)[\s>]/.test(html)) return refuse(`The revised ${noun} did not come back as a finished page — try the job again.`);
+      p.html = html;
+      p.steps[p.steps.length - 1].detail = "Revised once.";
+    }
+    p.revisions += 1;
+    return { ...p, stage: CREATIVE_STAGE_REAUDIT };
+  }
+
+  return p;
+}
+
+/** Run the whole creative job, one stage at a time (the local command line and the tests). */
+export async function runCreative(input: RunCreativeInput, deps: RunCreativeDeps = {}): Promise<CreativeResult> {
+  const brief = input.brief.trim();
+  if (!brief) {
+    return { html: "", slides: [], facts: null, steps: [], totalTokens: 0, totalCostUsd: 0, status: "refused", reason: "There was no brief to work from.", revisions: 0 };
+  }
+  let progress = emptyCreativeProgress(brief, input.jobType, deps.revisionNote);
+  if (deps.existingFacts) {
+    // A revision reuses the facts already read — no new read, but the
+    // read step still shows what was read.
+    progress.facts = deps.existingFacts;
+    progress.steps.push({
+      agent: CREATIVE_BUILDER[input.jobType],
+      what: `Read the brief again — ${deps.existingFacts.businessName ? `"${deps.existingFacts.businessName}"` : "the business"}: ${deps.existingFacts.whatItDoes || "what it does, its services and its contact"}.`,
+      detail: factsText(deps.existingFacts).slice(0, 400),
+    });
+    progress.stage = CREATIVE_STAGE_BUILD;
+  }
+  while (progress.status === "in-progress" && progress.stage !== 0) {
+    progress = await runCreativeStage(progress, deps);
+  }
+  return creativeProgressToResult(progress);
+}

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { JOB_LABELS, type JobType } from "@ikenga/shared";
+import Slideshow from "@/components/Slideshow";
 
 /**
  * Job page — a hired job gets its own page, where you can watch the team
@@ -10,6 +11,12 @@ import { JOB_LABELS, type JobType } from "@ikenga/shared";
  * quote, the bond the CFO puts up, and the decisions the CFO made. No
  * money moves here yet — escrow is not switched on, and the page says so
  * in plain words.
+ *
+ * All four jobs are delivered here: the market report (words + sources),
+ * the website and the flyers (a real page built from the brief, shown
+ * in a locked-down frame that cannot run code), and the promo video
+ * (a motion slideshow — moving slides, not a video file — and the page
+ * says so plainly).
  */
 interface JobDetail {
   job: {
@@ -36,6 +43,9 @@ interface JobDetail {
     revisions: number;
     deliveredAt: string;
     stage: number;
+    deliverableKind?: "report" | "website" | "flyer" | "slideshow";
+    html?: string;
+    slides?: { title: string; text: string }[];
   } | null;
   nextStep: string | null;
   backend: string;
@@ -44,6 +54,26 @@ interface JobDetail {
   fxSwaps: unknown[];
   reconciliation: { settled: number; unresolved: number; failed: number };
 }
+
+/** What the team will do, before it has started — one line per job type. */
+const NOT_STARTED_BLURB: Record<JobType, string> = {
+  "market-report":
+    "The team has not started this report yet. Scout will look the market up, Researcher will plan it, Writer will write it, Analyst will check the numbers, and a different model will read it before it reaches you.",
+  website:
+    "The team has not started this website yet. Designer will read your brief and build your one-page website, Analyst will check every word against your brief, and a different model will read it before it reaches you.",
+  flyers:
+    "The team has not started this flyer yet. Designer will read your brief and make your flyer and price list, Analyst will check every price against your brief, and a different model will read it before it reaches you.",
+  "promo-video":
+    "The team has not started this promo yet. Producer will read your brief and put your slideshow together, Analyst will check every word against your brief, and a different model will read it before it reaches you.",
+};
+
+/** What one finished job costs the team in AI time, in plain words. */
+const COST_BLURB: Record<JobType, string> = {
+  "market-report": "The report costs about a cent of AI time.",
+  website: "The website costs about a cent of AI time.",
+  flyers: "The flyer costs about a cent of AI time.",
+  "promo-video": "The slideshow costs about a cent of AI time.",
+};
 
 /** Tiny markdown renderer for the report: headings, bold, lists, links, paragraphs. Escapes HTML first. */
 function renderReport(md: string): { __html: string } {
@@ -79,6 +109,63 @@ function renderReport(md: string): { __html: string } {
   }
   if (inList) html += "</ul>";
   return { __html: html };
+}
+
+/**
+ * A delivered website or flyer, shown in a locked-down frame: the page
+ * cannot run code (no scripts are allowed) and cannot reach out. The
+ * flyer gets print and download buttons; the website gets a link to
+ * its own full page.
+ */
+function PagePreview({ jobId, jobType, html }: { jobId: string; jobType: JobType; html: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const isFlyer = jobType === "flyers";
+
+  function printFlyer() {
+    frameRef.current?.contentWindow?.print();
+  }
+
+  function downloadPage() {
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = isFlyer ? "flyer.html" : "website.html";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div>
+      <iframe
+        ref={frameRef}
+        title={isFlyer ? "Your flyer" : "Your website"}
+        srcDoc={html}
+        // Locked down: scripts are switched off, so nothing on the page
+        // can run code. Same-origin is kept so the print button works.
+        sandbox="allow-same-origin"
+        style={{ width: "100%", height: isFlyer ? 560 : 600, border: "1px solid var(--hatch-widget-border, #ddd6c4)", borderRadius: 12, background: "#fff" }}
+      />
+      <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+        {isFlyer && (
+          <button onClick={printFlyer} className="btn leaf" type="button">
+            Print / save as PDF
+          </button>
+        )}
+        <button onClick={downloadPage} className="btn" type="button">
+          Download the page
+        </button>
+        <a href={`/jobs/${jobId}/site`} className="btn" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+          Open the full {isFlyer ? "flyer" : "website"} →
+        </a>
+      </div>
+      <p style={{ marginTop: 12, fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
+        Built from your brief — every word comes from what you told us.
+        The page is shown in a locked-down frame, so nothing on it can
+        run code or send anything anywhere.
+      </p>
+    </div>
+  );
 }
 
 export default function JobPage() {
@@ -126,7 +213,7 @@ export default function JobPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.job.status]);
 
-  /** Run the stages one by one until the report is delivered or refused. */
+  /** Run the stages one by one until the work is delivered or refused. */
   async function driveStages() {
     if (drivingRef.current) return;
     drivingRef.current = true;
@@ -143,7 +230,7 @@ export default function JobPage() {
         if (d.done) break;
       }
     } catch (e) {
-      setRunError(e instanceof Error ? e.message : "The team could not finish the report");
+      setRunError(e instanceof Error ? e.message : "The team could not finish the work");
     } finally {
       drivingRef.current = false;
       setRunning(false);
@@ -166,7 +253,7 @@ export default function JobPage() {
       await reload();
       await driveStages();
     } catch (e) {
-      setRunError(e instanceof Error ? e.message : "The team could not finish the report");
+      setRunError(e instanceof Error ? e.message : "The team could not finish the work");
       setRunning(false);
     }
   }
@@ -227,34 +314,25 @@ export default function JobPage() {
           </div>
           <div style={{ marginTop: 24 }}>
             <h2 style={{ fontSize: 20 }}>Who did what</h2>
-            {data.job.jobType === "market-report" && !data.report && (
+            {!data.report && (
               <div className="card pad" style={{ marginTop: 12 }}>
                 <p style={{ color: "var(--ink-2)", lineHeight: 1.6 }}>
-                  The team has not started this report yet. Scout will look
-                  the market up, Researcher will plan it, Writer will write
-                  it, Analyst will check the numbers, and a different model
-                  will read it before it reaches you.
+                  {NOT_STARTED_BLURB[data.job.jobType]}
                 </p>
                 <button onClick={() => startWork()} disabled={running} className="btn leaf lg" style={{ marginTop: 16 }}>
                   {running ? "The team is working…" : "Start the work →"}
                 </button>
                 {runError && <p className="error" style={{ marginTop: 12 }}>{runError}</p>}
                 <p style={{ marginTop: 12, fontSize: 13, color: "var(--muted)" }}>
-                  The report costs about a cent of AI time. No money moves
+                  {COST_BLURB[data.job.jobType]} No money moves
                   on this job yet — the escrow is not switched on.
                 </p>
               </div>
             )}
-            {data.job.jobType !== "market-report" && !data.report && (
-              <p style={{ marginTop: 8, color: "var(--ink-2)" }}>
-                Only the market report can be done by the team right now — the
-                other jobs are not wired up yet.
-              </p>
-            )}
             {data.report && data.report.status === "refused" && (
               <div className="card pad" style={{ marginTop: 12 }}>
                 <p style={{ color: "var(--ink-2)", lineHeight: 1.6 }}>
-                  The team could not finish this report: {data.report.reason}
+                  The team could not finish this job: {data.report.reason}
                 </p>
                 <button onClick={() => startWork()} disabled={running} className="btn leaf lg" style={{ marginTop: 16 }}>
                   {running ? "The team is working…" : "Try again →"}
@@ -287,18 +365,63 @@ export default function JobPage() {
             {data.report && data.report.status === "delivered" && (
               <>
                 <div className="card pad" style={{ marginTop: 24 }}>
-                  <h2 style={{ fontSize: 20 }}>Your report</h2>
-                  <div dangerouslySetInnerHTML={renderReport(data.report.report)} />
-                  <h3 style={{ fontSize: 16, marginTop: 20 }}>Sources</h3>
-                  <ul style={{ margin: "6px 0 0 18px", lineHeight: 1.7 }}>
-                    {data.report.sources.map((s) => (
-                      <li key={s.url}>
-                        <a href={s.url} target="_blank" rel="noreferrer">{s.title}</a>
-                      </li>
-                    ))}
-                  </ul>
+                  {data.job.jobType === "market-report" && (
+                    <>
+                      <h2 style={{ fontSize: 20 }}>Your report</h2>
+                      <div dangerouslySetInnerHTML={renderReport(data.report.report)} />
+                      {data.report.sources.length > 0 && (
+                        <>
+                          <h3 style={{ fontSize: 16, marginTop: 20 }}>Sources</h3>
+                          <ul style={{ margin: "6px 0 0 18px", lineHeight: 1.7 }}>
+                            {data.report.sources.map((s) => (
+                              <li key={s.url}>
+                                <a href={s.url} target="_blank" rel="noreferrer">{s.title}</a>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </>
+                  )}
+                  {data.job.jobType === "website" && data.report.html && (
+                    <>
+                      <h2 style={{ fontSize: 20 }}>Your website</h2>
+                      <p style={{ marginTop: 8, color: "var(--ink-2)", lineHeight: 1.6 }}>
+                        Designer built this one-page website from your brief.
+                      </p>
+                      <div style={{ marginTop: 14 }}>
+                        <PagePreview jobId={data.job.id} jobType={data.job.jobType} html={data.report.html} />
+                      </div>
+                    </>
+                  )}
+                  {data.job.jobType === "flyers" && data.report.html && (
+                    <>
+                      <h2 style={{ fontSize: 20 }}>Your flyer</h2>
+                      <p style={{ marginTop: 8, color: "var(--ink-2)", lineHeight: 1.6 }}>
+                        Designer made this flyer and price list from your
+                        brief. Prices come from your brief — where you gave
+                        no price, it says &ldquo;price not listed&rdquo;.
+                      </p>
+                      <div style={{ marginTop: 14 }}>
+                        <PagePreview jobId={data.job.id} jobType={data.job.jobType} html={data.report.html} />
+                      </div>
+                    </>
+                  )}
+                  {data.job.jobType === "promo-video" && data.report.slides && data.report.slides.length > 0 && (
+                    <>
+                      <h2 style={{ fontSize: 20 }}>Your promo slideshow</h2>
+                      <p style={{ marginTop: 8, color: "var(--ink-2)", lineHeight: 1.6 }}>
+                        Producer put this together from your brief. It is a
+                        motion slideshow — moving slides with your
+                        business&rsquo;s words — not a video file.
+                      </p>
+                      <div style={{ marginTop: 14 }}>
+                        <Slideshow slides={data.report.slides} />
+                      </div>
+                    </>
+                  )}
                   <p style={{ marginTop: 16, fontSize: 13, color: "var(--muted)" }}>
-                    The whole report cost about ${data.report.totalCostUsd.toFixed(4)} of AI time
+                    The whole job cost about ${data.report.totalCostUsd.toFixed(4)} of AI time
                     ({data.report.totalTokens.toLocaleString()} tokens)
                     {data.report.revisions > 0 ? `, including ${data.report.revisions} free revision` : ""}.
                   </p>
