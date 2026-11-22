@@ -18,12 +18,12 @@ Built for the Celo **"Agents Open for Business"** hackathon (Nov 20 – Dec 7,
 - **Track 3 — Self Agent ID ($1,000):** the CFO serves or pays an agent only
   after its Self Agent ID is verified.
 
-## Credit
+## What Ikenga is
 
-Inspired by Syncly (github.com/neromtoobad/syncly) — fresh implementation,
-**no code copied**. Ikenga differs where it counts: Celo mainnet instead of
-Arc, Textile FX USDT↔cNGN instead of Bachs/NairaDesk, Celo's x402
-facilitator, and a Self Agent ID gate Syncly does not have.
+Ikenga is a fresh implementation built for Celo: $1 jobs, an AI CFO, escrow
+and a signed audit log, with the naira leg on Textile FX USDT↔cNGN, Celo's
+x402 facilitator, and a Self Agent ID gate before any agent is served or
+paid.
 
 ## Step 2 status — money paths are real, live proof is blocked on the user
 

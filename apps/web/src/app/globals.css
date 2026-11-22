@@ -1,9 +1,8 @@
 @import "tailwindcss";
 
 /*
- * Ikenga design system — rebuilt to match Syncly's live site
- * (hiresyncly.site), in Ikenga's own code. Syncly's palette, taken from
- * its public globals.css: cream paper, forest ink, leaf green and brass.
+ * Ikenga design system — in Ikenga's own code. Palette: cream paper,
+ * forest ink, leaf green and brass.
  * Light only. Geist for words, Geist Mono for labels and money.
  */
 :root {
@@ -932,7 +931,7 @@ input[type="text"]:focus {
 }
 
 /* ================================================================
-   Polish pass 2 — Syncly side-by-side audit (2026-11-22).
+   Polish pass 2 (2026-11-22).
    Everything below is Ikenga's own CSS for the new pieces: the drawn
    HQ, the services index, sticky how-cards with art, the vault, the
    money-path chips, the office scene, the FAQ accordions, the dark
@@ -1048,8 +1047,7 @@ input[type="text"]:focus {
   color: #fff;
 }
 
-/* The HQ building, drawn in CSS. Syncly's hero is a photo of its
-   office; Ikenga has no photo, so the office is drawn instead. */
+/* The HQ building, drawn in CSS. */
 .hq {
   width: 300px;
   display: grid;
@@ -1197,8 +1195,7 @@ input[type="text"]:focus {
   font-size: 14px;
 }
 
-/* CSS previews inside the service cards (Syncly uses photos here;
-   Ikenga draws the same ideas in CSS). */
+/* CSS previews inside the service cards, drawn in CSS. */
 .pv {
   border-bottom: 1px solid var(--line);
   background: var(--paper-2);

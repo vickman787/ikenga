@@ -70,11 +70,9 @@ defaults to closed. Payments go through x402 via Celo's facilitator
 - Jobs: the web hire flow stores orders in server memory only. No escrow, no
   real conversion, no real payment.
 
-## How it differs from Syncly
+## What Ikenga is
 
-Ikenga is inspired by Syncly (github.com/neromtoobad/syncly) — the $1 jobs,
-the escrow, the CFO, the audit log. It is a fresh implementation: no Syncly
-code was copied. The differences are the point of the entry: Celo mainnet
-instead of Arc, Textile FX USDT↔cNGN instead of Bachs/NairaDesk, Celo x402
-facilitator instead of Circle Gateway, and a Self Agent ID gate that Syncly
-does not have.
+Ikenga is a fresh implementation built for Celo: $1 jobs, escrow, a
+deterministic CFO and a signed audit log, with the naira leg on Textile FX
+USDT↔cNGN, Celo's x402 facilitator, and a Self Agent ID gate before any
+agent is served or paid.

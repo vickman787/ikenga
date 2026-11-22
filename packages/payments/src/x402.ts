@@ -26,7 +26,7 @@
  *   §2.1 said to check it per asset); pricing (gas at cost + 0.3%) is
  *   therefore not asserted per asset here.
  *
- * Error discipline (Syncly/Coven rule, spec.md): after signing, a payment
+ * Error discipline (project rule, spec.md): after signing, a payment
  * is retried ONLY if the seller says it declined. A post-sign timeout is
  * ambiguous — the facilitator may still have settled — and is NEVER
  * retried. verifyPayment/settlePayment return discriminated results and

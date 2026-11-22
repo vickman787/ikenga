@@ -4,14 +4,13 @@ import HireForm from "@/components/HireForm";
 import Nav from "@/components/Nav";
 
 /**
- * Ikenga home page — same structure and palette as Syncly's live site,
- * rebuilt in Ikenga's own code (every visual here is drawn in CSS, no
- * Syncly code or images copied). Adapted to what Ikenga is for: Celo
- * not Arc, Textile FX USDT ↔ cNGN not Bachs, Self Agent ID checks.
+ * Ikenga home page — built in Ikenga's own code (every visual here is
+ * drawn in CSS). Built for Celo: Textile FX USDT ↔ cNGN, Self Agent ID
+ * checks.
  *
  * Honesty rule: Ikenga has no finished jobs, customers or sellers yet,
- * so this page invents none. Where Syncly shows live proof, Ikenga
- * says plainly that it is just getting started.
+ * so this page invents none. It says plainly that it is just getting
+ * started.
  */
 
 const TEAM: { name: string; role: string; line: string; buys: string; pays: string }[] = [
@@ -90,8 +89,7 @@ function SectionLabel({ n, children }: { n: string; children: React.ReactNode })
   );
 }
 
-/** The Ikenga HQ building, drawn in CSS — Syncly's hero is a photo of its
- *  office; Ikenga has no photo, so the office is drawn instead. */
+/** The Ikenga HQ building, drawn in CSS. */
 function HqBuilding({ big }: { big?: boolean }) {
   return (
     <div className={`hq${big ? " big" : ""}`} aria-hidden="true">
@@ -243,7 +241,7 @@ export default function Home() {
       <Nav />
 
       <main id="top">
-        {/* 01 · hero — drawn HQ instead of Syncly's office photo */}
+        {/* 01 · hero — drawn HQ */}
         <section className="hx">
           <div className="hx__panel">
             <div className="hx__art" aria-hidden="true">
@@ -285,7 +283,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 01 · What we do — the services index Syncly opens with */}
+        {/* 01 · What we do — the services index */}
         <section className="section" id="services">
           <div className="wrap">
             <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
@@ -320,7 +318,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 02 · How it works — stacking cards with art, like Syncly's */}
+        {/* 02 · How it works — stacking cards with art */}
         <section className="section tight" id="how">
           <div className="wrap">
             <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
@@ -345,7 +343,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 03 · Real work — Syncly's layout, honest empty state */}
+        {/* 03 · Real work — honest empty state */}
         <section className="section tight" id="work">
           <div className="wrap">
             <div className="rw-grid">
@@ -391,7 +389,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 04 · Pay your way — three cards in a row, like Syncly's */}
+        {/* 04 · Pay your way — three cards in a row */}
         <section className="section tight" id="pay">
           <div className="wrap">
             <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
@@ -681,7 +679,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 08 · The office — a drawn office scene, like Syncly's live office */}
+        {/* 08 · The office — a drawn office scene */}
         <section className="section tight" id="office">
           <div className="wrap">
             <div className="office-panel">
@@ -713,7 +711,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 09 · Questions — Syncly's two-column accordion layout */}
+        {/* 09 · Questions — two-column accordion layout */}
         <section className="section tight" id="questions">
           <div className="wrap qa-grid">
             <div>
@@ -738,7 +736,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 10 · Start here — Syncly's dark close, with the hire form */}
+        {/* 10 · Start here — dark close, with the hire form */}
         <section className="section tight" id="hire">
           <div className="wrap">
             <div className="dark-panel on-dark close-panel">

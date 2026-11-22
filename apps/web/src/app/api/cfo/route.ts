@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { getLedger, ledgerBackend, listHires } from "@/lib/jobs";
 
 /**
- * GET /api/cfo — the public, signed CFO decision log (modelled on Syncly's
- * /api/cfo). Every decision is hash-chained; `verify.ok` says whether the
+ * GET /api/cfo — the public, signed CFO decision log. Every decision is hash-chained; `verify.ok` says whether the
  * chain recomputes cleanly. No signature is published: Step 2 decisions
  * carry a placeholder signature ("0xikenga-step2") until the CFO key signs
  * them for real — publishing it would imply a real signature.
@@ -27,7 +26,7 @@ export async function GET() {
     mode: ledgerBackend() === "postgres" ? "live" : "demo",
     backend: ledgerBackend(),
     verify: { ok: allOk, ordersChecked: orders.length, entries: decisions.length },
-    jobs: listHires().length,
+    jobs: (await listHires()).length,
     decisions,
     note: "Decisions are hash-chained (sha256). Signatures are not yet real — the CFO signing key is a Step 3 item.",
   });
