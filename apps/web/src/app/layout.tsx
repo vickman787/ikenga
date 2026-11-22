@@ -10,7 +10,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Ikenga · Your business's AI team, every job $1",
   description:
-    "Ikenga hires AI agents to do $1 jobs for Nigerian small businesses on Celo. Escrow, a deterministic AI CFO, and a signed audit log. Celo Agents Open for Business hackathon.",
+    "Ikenga is your business's AI team: $1 jobs for Nigerian small businesses on Celo. Your money waits in escrow until you accept the work, and an AI CFO runs it.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

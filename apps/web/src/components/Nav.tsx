@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react";
 
 /**
- * Ikenga nav — mirrors Syncly's Nav: logo, section links, a live-status
- * chip, the Hire pill, and a grouped mobile menu sheet. The status chip
- * is honest: Ikenga is not live on mainnet yet, so it says so.
+ * Ikenga nav — logo, section links, the Hire pill, and a grouped mobile
+ * menu sheet. No status chip: the site speaks for itself.
  */
 const LINKS: [string, string][] = [
   ["#services", "Services"],
@@ -69,9 +68,6 @@ export default function Nav() {
           ))}
         </nav>
         <span style={{ flex: 1 }} />
-        <span className="nav__status demo">
-          <span className="dot" /> Demo · no money moves yet
-        </span>
         <a href="#hire" className="pill dark nav__cta">
           Hire Ikenga — $1 <span className="pill__ic">→</span>
         </a>

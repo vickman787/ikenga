@@ -4,73 +4,68 @@ import HireForm from "@/components/HireForm";
 import Nav from "@/components/Nav";
 
 /**
- * Ikenga home page — second polish pass, side-by-side against Syncly's
- * live site (hiresyncly.site) and its public repo (web/src/views/Home.tsx,
- * home/sections.tsx, home/art.tsx, components/Nav.tsx, components/Footer.tsx).
- * Same structure, same palette, Ikenga's own code — no Syncly code copied
- * verbatim, no Syncly images or sprites used (every visual here is drawn
- * in CSS). Adapted to what Ikenga is for: Celo not Arc, Textile FX
- * USDT ↔ cNGN not Bachs, Self Agent ID gate, tag celo_5144280c393f.
+ * Ikenga home page — same structure and palette as Syncly's live site,
+ * rebuilt in Ikenga's own code (every visual here is drawn in CSS, no
+ * Syncly code or images copied). Adapted to what Ikenga is for: Celo
+ * not Arc, Textile FX USDT ↔ cNGN not Bachs, Self Agent ID checks.
  *
- * Honesty rule: Ikenga has no live jobs, customers, sellers or deployed
- * contracts yet, so this page invents none. Where Syncly shows live proof,
- * Ikenga shows honest zeros / empty states and the one live check that is
- * real (the Textile FX preview). The seller registry starts empty by
- * design, so no supplier names are shown for the agents.
+ * Honesty rule: Ikenga has no finished jobs, customers or sellers yet,
+ * so this page invents none. Where Syncly shows live proof, Ikenga
+ * says plainly that it is just getting started.
  */
 
 const TEAM: { name: string; role: string; line: string; buys: string; pays: string }[] = [
-  { name: "Scout", role: "Finds things", line: "Finds every business, page and source the brief asks for.", buys: "Search and maps", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Researcher", role: "Turns sentences into plans", line: "Turns your sentence into a search plan, then pulls out the facts.", buys: "AI models", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Reader", role: "Reads what matters", line: "Opens the websites and reads what matters on them.", buys: "Page reading", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Writer", role: "Writes the words", line: "Writes the posts, the ad copy, the briefs, and a personal first line for every lead.", buys: "AI models", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Designer", role: "Builds and designs", line: "Builds your website and makes the product photos and ad creatives.", buys: "AI models and images", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Producer", role: "Makes the motion", line: "Makes the motion ads, and the video in every ad launch.", buys: "Video and music", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Investigator", role: "Checks before you pay", line: "Checks every email, phone number and seller before any money moves.", buys: "Checks and screening", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Analyst", role: "Compares the numbers", line: "Compares prices, answers and signals: the numbers on every report.", buys: "AI models", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Auditor", role: "Checks the work twice", line: "Checks the work on a different AI before it is delivered.", buys: "A second model family", pays: "x402 · its own USDT balance on Celo" },
-  { name: "Messenger", role: "Gets it to you", line: "Packs the files and gets them to you.", buys: "Delivery", pays: "Paid by the CFO · one plan, not per delivery" },
+  { name: "Scout", role: "Finds things", line: "Finds every business, page and source the brief asks for.", buys: "Search and maps", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Researcher", role: "Turns sentences into plans", line: "Turns your sentence into a search plan, then pulls out the facts.", buys: "AI models", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Reader", role: "Reads what matters", line: "Opens the websites and reads what matters on them.", buys: "Page reading", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Writer", role: "Writes the words", line: "Writes the posts, the ad copy, the briefs, and a personal first line for every lead.", buys: "AI models", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Designer", role: "Builds and designs", line: "Builds your website and makes the product photos and ad creatives.", buys: "AI models and images", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Producer", role: "Makes the motion", line: "Makes the motion ads, and the video in every ad launch.", buys: "Video and music", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Investigator", role: "Checks before you pay", line: "Checks every email, phone number and seller before any money moves.", buys: "Checks and screening", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Analyst", role: "Compares the numbers", line: "Compares prices, answers and signals: the numbers on every report.", buys: "AI models", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Auditor", role: "Checks the work twice", line: "Checks the work on a different AI before it is delivered.", buys: "A second model family", pays: "Pays for it itself, in USDT on Celo" },
+  { name: "Messenger", role: "Gets it to you", line: "Packs the files and gets them to you.", buys: "Delivery", pays: "The CFO covers delivery — no charge per message" },
 ];
 
 const SERVICES: { id: "website" | "promo-video" | "flyers" | "market-report"; name: string; tagline: string; preview: "site" | "video" | "flyer" | "money" }[] = [
-  { id: "website", name: "Business website", tagline: "A one-page site with your best work, your services, and WhatsApp, call and directions on every screen.", preview: "site" },
-  { id: "promo-video", name: "Promo video", tagline: "A short motion ad for your feed, Stories and WhatsApp Status — the hook, the dish, the order card.", preview: "video" },
-  { id: "flyers", name: "Flyers & price list", tagline: "A price list and flyers your customers can order from, with your WhatsApp number on every one.", preview: "flyer" },
-  { id: "market-report", name: "Market report", tagline: "Where your money goes, read from your bank statement and reconciled — the numbers, not a guess.", preview: "money" },
+  { id: "website", name: "Business website", tagline: "A one-page site for your business — your best work, your services, and WhatsApp, call and directions on every screen.", preview: "site" },
+  { id: "promo-video", name: "Promo video", tagline: "A short video for your feed, your Stories and your WhatsApp Status — the hook, the food, the order card.", preview: "video" },
+  { id: "flyers", name: "Flyers & price list", tagline: "A price list and flyers your customers can actually order from, with your WhatsApp number on every one.", preview: "flyer" },
+  { id: "market-report", name: "Market report", tagline: "We read your bank statement and show you where your money really went — the numbers, not a guess.", preview: "money" },
 ];
 
 const FAQ: { q: string; a: string }[] = [
   {
     q: "Do I need crypto?",
-    a: "You need a Celo wallet with USDT — that is how the $1 goes into escrow. The naira leg runs through Textile FX, which converts USDT to cNGN on Celo, so the supplier is paid in cNGN. There is no bank-transfer option yet.",
+    a: "Yes — just a Celo wallet with USDT. That is what goes into escrow for your $1 job. If the supplier needs naira, we change the USDT to cNGN for them on Celo. There is no bank-transfer option yet.",
   },
   {
     q: "What if I don't like the work?",
-    a: "Ask for one free revision with what to change, or reject it: you get your money back in full, plus a bond the CFO put up when it took your job.",
+    a: "Tell us what to change and you get one free revision. Or say no: you get your $1 back in full, plus a $0.10 bond the CFO put up when we took the job.",
   },
   {
     q: "How fast is it?",
-    a: "The money path is instant — pricing, escrow and CFO decisions happen on the job page as they run. The work itself is delivered and reviewed on your job page; the creative work is not yet fully automated, so the first jobs are finished by the team and shown to you before you accept.",
+    a: "You see the price and the CFO's decision straight away on your job page. The work itself takes a few minutes to a few hours — the first jobs are finished by the team and shown to you before you accept. The creative work is not fully automatic yet, and we would rather say that plainly than pretend otherwise.",
   },
   {
     q: "Is it really $1?",
-    a: "Yes. Every service is $1 while we grow. You always see the exact price before you pay, and the CFO puts up a bond on every job.",
+    a: "Yes — every job is $1 while we are growing. You see the exact price before you pay anything, and the CFO puts up a bond on every job.",
   },
   {
     q: "Who does the work?",
-    a: "A team of AI agents, each with one job: one finds things, one reads, one writes, one designs, one checks. A separate AI audits the work before it reaches you, and every step is shown on your job page. An agent is paid only after its Self Agent ID is verified.",
+    a: "A team of AI agents, one job each: one finds things, one reads, one writes, one designs, one checks. A different AI looks over the work before it reaches you, and you can follow every step on your job page. An agent only gets paid after we have checked its Self ID.",
   },
   {
     q: "What is Self Agent ID?",
-    a: "Before any agent is paid, Ikenga checks that it is a real, verified agent — registered on Celo and verified with Self. An unverified agent is refused, and the refusal is written to the audit log. That is the Self Agent ID track: verified agents only, paid only after proof.",
+    a: "Before any agent gets paid, we check it is a real, verified agent — registered on Celo and verified with Self. If it does not check out, it does not get paid, and we write that down in the log for everyone to see. Verified agents only, paid only after proof.",
   },
   {
     q: "Is Ikenga live on Celo mainnet yet?",
-    a: "Not yet. The money path — CFO pricing, the hash-chained ledger, the Celo x402 client, the Textile FX client and the Self Agent ID gate — is built and tested, and a live Textile FX preview on Celo turns $10 USDT into about 14,440 cNGN. The escrow and vault contracts are written but not deployed, and no live swap or settlement has run. That happens with the first named real user, on Celo mainnet.",
+    a: "Not yet, and we will not pretend otherwise. The money side is built and tested — the CFO's pricing, the log, the Celo payments and the Self ID check — and we have checked a live rate on Celo: $10 USDT comes out at about 14,440 cNGN. The escrow and vault are written but not switched on yet. They go live with our first real customer, on Celo mainnet.",
   },
   {
     q: "Is my information private?",
-    a: "Your full-quality files unlock only when you accept. Every CFO decision is hash-chained and signed in the public audit log — the log shows the money, not your private brief.",
+    a: "Your files only unlock in full when you accept the work. The public log shows the money — what was paid, when, and why — not your private brief.",
   },
 ];
 
@@ -177,22 +172,22 @@ function ServicePreview({ kind }: { kind: "site" | "video" | "flyer" | "money" }
 const HOW: { n: string; h: string; s: string; p: React.ReactNode; art: "quote" | "escrow" | "receipt" | "decide" }[] = [
   {
     n: "01", h: "Tell us what you need.", s: "A short form. You see the price first.",
-    p: <>Pick a job and answer a few questions about your business. The AI CFO prices it before anything starts, and <b>puts up a bond you receive if you reject the work</b>.</>,
+    p: <>Pick a job and tell us a little about your business. The CFO prices it before anything starts — and puts up a bond that goes to you if you turn the work down.</>,
     art: "quote",
   },
   {
     n: "02", h: "Pay $1, in USDT or cNGN.", s: "Your money waits in escrow, not with us.",
-    p: <>Pay <b>1 USDT from your own wallet on Celo</b> — about ₦1,444 in cNGN at the live Textile FX preview — or let the naira leg convert it for you. The money is held by <b>a contract on Celo</b> until you accept the work.</>,
+    p: <>Pay <b>1 USDT from your own wallet on Celo</b> — about ₦1,444 in cNGN — or let us change it to cNGN for you. The money sits in a contract on Celo until you accept the work.</>,
     art: "escrow",
   },
   {
     n: "03", h: "Watch the team work.", s: "Live, step by step, on your job page.",
-    p: <>The agents search, read, write and design while you watch, and <b>every tool they pay for is listed</b>, linked to its payment on Celo.</>,
+    p: <>The agents search, read, write and design while you watch, and <b>every tool they pay for is listed</b>, with a link to the payment on Celo.</>,
     art: "receipt",
   },
   {
     n: "04", h: "Accept, revise, or get your money back.", s: "You decide. Silence for 48 hours counts as yes.",
-    p: <>Preview the work, then accept to unlock the full files, ask for <b>one free revision</b>, or reject it and <b>get your money back plus the bond</b>.</>,
+    p: <>Preview the work, then accept to unlock the full files, ask for <b>one free revision</b>, or say no and <b>get your money back plus the bond</b>.</>,
     art: "decide",
   },
 ];
@@ -212,9 +207,9 @@ function HowArt({ kind }: { kind: "quote" | "escrow" | "receipt" | "decide" }) {
     return (
       <div className="hw-art">
         <span className="hw-art__k mono">JobEscrow · Celo</span>
-        <p className="hw-art__big">🔒 $1 in escrow</p>
+        <p className="hw-art__big">🔒 $1 held for you</p>
         <p className="hw-art__sub">Held by the contract — not by Ikenga, not by the agent — until you accept the work.</p>
-        <span className="chip live"><span className="dot" /> Escrow funded</span>
+        <span className="chip live"><span className="dot" /> Held until you accept</span>
       </div>
     );
   }
@@ -223,9 +218,9 @@ function HowArt({ kind }: { kind: "quote" | "escrow" | "receipt" | "decide" }) {
       <div className="hw-art">
         <span className="hw-art__k mono">Every tool payment, listed</span>
         {[["Search", "paid"], ["Read", "paid"], ["Design", "paid"]].map(([a, b]) => (
-          <div className="hw-art__row" key={a}><span>{a}</span><b>✓ {b} · x402</b></div>
+          <div className="hw-art__row" key={a}><span>{a}</span><b>✓ {b} · on Celo</b></div>
         ))}
-        <p className="hw-art__sub">Each line links to its payment on Celo. Nothing is paid to a seller the CFO has not pinned.</p>
+        <p className="hw-art__sub">Each line links to its payment on Celo. We only pay sellers the CFO has approved.</p>
       </div>
     );
   }
@@ -235,7 +230,7 @@ function HowArt({ kind }: { kind: "quote" | "escrow" | "receipt" | "decide" }) {
       <div className="hw-art__decide">
         <span className="decide accept">✓ Accept — unlock the files</span>
         <span className="decide">↺ One free revision</span>
-        <span className="decide">✕ Reject — $1 back + $0.10 bond</span>
+        <span className="decide">✕ Say no — $1 back + $0.10 bond</span>
       </div>
       <p className="hw-art__sub">Silence for 48 hours counts as yes.</p>
     </div>
@@ -299,9 +294,9 @@ export default function Home() {
                 Everything a small business needs done. $1 each.
               </h2>
               <p>
-                Pick a job, fill a short form, and a team of AI agents does it.
-                You see the price before anything starts and only pay if you
-                accept the work.
+                Pick a job, fill in a short form, and a team of AI agents gets
+                to work. You see the price before anything starts, and you
+                only pay if you accept the work.
               </p>
             </div>
             <div className="ww-grid">
@@ -357,16 +352,16 @@ export default function Home() {
               <div>
                 <SectionLabel n="03">Real work</SectionLabel>
                 <h2 className="h2" style={{ marginTop: 18 }}>
-                  Real businesses. Real work. Starting now.
+                  Real businesses. Real work. We're just getting started.
                 </h2>
                 <p className="lede" style={{ marginTop: 16, color: "var(--ink-2)", lineHeight: 1.6 }}>
-                  Ikenga has no finished jobs to show yet — no customer story,
-                  no job counts. The first real job will appear here, with its
-                  job page, its escrow and its CFO decisions, once a named user
-                  hires the team.
+                  Ikenga hasn't finished a job yet — no customer story, no job
+                  counts to show you. The first real job will appear here,
+                  with its own page, its escrow and the CFO's decisions, once
+                  someone hires the team.
                 </p>
                 <div className="rw-stats">
-                  <div><b>0</b><span>jobs delivered</span></div>
+                  <div><b>0</b><span>jobs done</span></div>
                   <div><b>0</b><span>businesses served</span></div>
                   <div><b>0</b><span>payments settled on Celo</span></div>
                 </div>
@@ -383,15 +378,15 @@ export default function Home() {
                   <span className="btn">WhatsApp</span>
                   <div className="ph" />
                 </div>
-                <span className="rw-badge mono">First delivery preview · an illustration, not a real customer — yet</span>
+                <span className="rw-badge mono">First delivery preview — a drawing, not a real customer. Not yet.</span>
               </div>
             </div>
             <p style={{ marginTop: 28, color: "var(--ink-2)", lineHeight: 1.6, maxWidth: 760 }}>
-              What is real today: the money path is built and checked. A live
-              Textile FX preview on Celo (verified 2026-11-21) turns $10 USDT
-              into about <b>14,440 cNGN</b> — roughly ₦1,444 per dollar. The
-              CFO pricing, the hash-chained ledger, the Celo x402 client and
-              the Self Agent ID gate are all built and tested.
+              What's real today: the money side is built and checked. We
+              checked a live rate on Celo: $10 USDT comes out at about
+              <b>14,440 cNGN</b> — roughly ₦1,444 to the dollar. The CFO's
+              pricing, the money log, the Celo payments and the Self ID
+              check are all built and tested.
             </p>
           </div>
         </section>
@@ -412,11 +407,11 @@ export default function Home() {
                 </span>
                 <p className="amount">≈ ₦1,444</p>
                 <p>
-                  Pay in cNGN from your own wallet on Celo. The naira leg runs
-                  through <b>Textile FX</b>, which converts USDT to cNGN on Celo
-                  mainnet — no bank transfer, no middleman holding your money.
+                  Pay in cNGN from your own wallet on Celo. We change USDT to
+                  cNGN on Celo through <b>Textile FX</b> — no bank transfer,
+                  and nobody holds your money in the middle.
                 </p>
-                <p className="fine">Bank transfer is not live yet — the naira desk converts USDT to cNGN on Celo.</p>
+                <p className="fine">Bank transfer isn't available yet — the naira side works by changing USDT to cNGN on Celo.</p>
               </div>
               <div className="card paycard">
                 <span className="chip">USDT</span>
@@ -426,7 +421,7 @@ export default function Home() {
                   Rabby, Coinbase Wallet and other wallets. Your $1 waits in
                   escrow until you accept the work.
                 </p>
-                <p className="fine">USDT on another chain? Bridge it to Celo first.</p>
+                <p className="fine">Got USDT on another chain? Move it to Celo first.</p>
               </div>
               <div className="card paycard promise-card">
                 <span className="chip">Our promise</span>
@@ -451,41 +446,42 @@ export default function Home() {
               </h2>
               <p className="lede">
                 Ikenga&rsquo;s money lives in a vault on Celo, and an AI CFO runs
-                it. Every few minutes it reads the vault and every agent&rsquo;s
-                balance, then decides by fixed rules: it plans the week, puts
-                revenue to work and tops up agents who run low. No language
-                model touches the money, and every decision is signed.
+                it. Every few minutes it looks at the vault and every
+                agent&rsquo;s balance, then decides by fixed rules: it plans
+                the week, puts money to work, and tops up agents who are
+                running low. No language model ever touches the money, and
+                every decision is signed.
               </p>
               <div className="cfo-grid">
                 <div className="cfo-card">
                   <h3>→ Plans the week</h3>
                   <p>
                     Each agent&rsquo;s allowance comes from what it actually spent
-                    per job. The plan&rsquo;s hash is sealed on-chain before any
-                    money moves.
+                    per job. The plan is locked in on-chain before any money
+                    moves.
                   </p>
                 </div>
                 <div className="cfo-card">
                   <h3>→ Puts revenue to work</h3>
                   <p>
-                    Tools first, then bond cover for guarantees, then the
-                    reserve. The rest stays in operating. Four buckets:
+                    Tools first, then money set aside to cover our promises,
+                    then the reserve. The rest stays in operating. Four pots:
                     operating, tools, bond, reserve.
                   </p>
                 </div>
                 <div className="cfo-card">
                   <h3>→ Asks the Boss</h3>
                   <p>
-                    It moves money alone only up to 5 USDT per move, the limit
-                    the owner sets on the vault. Anything bigger waits for a
-                    human to co-sign on-chain.
+                    On its own it can only move up to 5 USDT at a time — that's
+                    the limit the owner set on the vault. Anything bigger
+                    waits for a person to sign off on-chain.
                   </p>
                 </div>
               </div>
               <div className="vault">
                 <div className="vault__head mono">
                   <span>IkengaVault · Celo mainnet</span>
-                  <span>illustration · vault not yet deployed</span>
+                  <span>Not switched on yet</span>
                 </div>
                 <div className="vault__buckets">
                   {BUCKETS.map((b) => (
@@ -497,18 +493,18 @@ export default function Home() {
                   ))}
                 </div>
                 <p className="vault__note">
-                  Balances are 0 until the first job settles — the vault holds
-                  nothing yet. Weekly tool budget: 30 USDT. An agent is paid
-                  only after its Self Agent ID is verified.
+                  Every pot sits at 0.00 USDT until the first job settles — the
+                  vault holds nothing yet. The weekly tool budget is 30 USDT,
+                  and an agent is only paid after we've checked its Self ID.
                 </p>
               </div>
               <div className="cfo-log">
                 <span>
-                  Decision log · <b>0</b> carried out · <b>0</b> to the Boss ·{" "}
-                  <b>✓</b> log verified
+                  Decision log · <b>0</b> made so far · <b>0</b> sent to the Boss ·{" "}
+                  <b>✓</b> log checks out
                 </span>
                 <span>
-                  No decisions yet — the first ones appear here once a job runs.
+                  Nothing here yet — the first decisions show up once a job runs.
                 </span>
                 <a href="/api/cfo">Read the CFO&rsquo;s rules →</a>
               </div>
@@ -525,8 +521,8 @@ export default function Home() {
                 From the invoice to the audit trail.
               </h2>
               <p style={{ marginTop: 16, fontSize: "var(--lede)", color: "var(--ink-2)" }}>
-                Real businesses pay real USDT. This is the path every dollar
-                takes through Ikenga, and the rule at each step.
+                This is the path every dollar takes through Ikenga, and the
+                rule at each step.
               </p>
             </div>
             <div className="money">
@@ -537,11 +533,11 @@ export default function Home() {
                     Customers pay into escrow <small>JobEscrow · Celo</small>
                   </h3>
                   <p>
-                    Every order is a fixed-price bill, paid into JobEscrow on
-                    Celo. Ikenga is paid only when the customer accepts. A
-                    rejection refunds it, <b>plus a bond the CFO put up</b>.
+                    Every order is a fixed-price bill, paid into escrow on
+                    Celo. Ikenga only gets paid when you accept. Say no and
+                    you get it back, <b>plus a bond the CFO put up</b>.
                   </p>
-                  <p className="mono mf-stat"><span className="dot" /> 0 jobs delivered</p>
+                  <p className="mono mf-stat"><span className="dot" /> 0 jobs done so far</p>
                 </div>
               </div>
               <div className="card money-step">
@@ -551,15 +547,15 @@ export default function Home() {
                     The vault splits it by rule <small>4 buckets</small>
                   </h3>
                   <p>
-                    Released money lands in IkengaVault. The CFO puts it to work
-                    across four buckets — operating, tools, bond, reserve — and
-                    keeps the reserve above its floor.
+                    Money that's released lands in the IkengaVault. The CFO
+                    splits it across four pots — operating, tools, bond,
+                    reserve — and keeps the reserve above its floor.
                   </p>
                   <p className="mono mf-stat">
                     {BUCKETS.map((b) => (
                       <i key={b.key} className="bucket-dot" style={{ background: b.color }} title={b.label} />
                     ))}
-                    A plan sealed on Celo each week
+                    A plan locked in on Celo each week
                   </p>
                 </div>
               </div>
@@ -567,13 +563,13 @@ export default function Home() {
                 <span className="money-step__no">03 · Contractors</span>
                 <div>
                   <h3>
-                    Each agent gets an allowance <small>per agentId</small>
+                    Each agent gets an allowance <small>10 wallets on Celo</small>
                   </h3>
                   <p>
                     Ten agents, each with its own wallet and a weekly allowance
-                    set from what it really spends per job. The CFO tops them up
-                    when they run low — and only after their Self Agent ID is
-                    verified.
+                    based on what it really spends per job. The CFO tops them
+                    up when they run low — and only after we've checked their
+                    Self ID.
                   </p>
                   <p className="mono mf-stat">
                     <span className="mf-faces">
@@ -590,38 +586,37 @@ export default function Home() {
                 <span className="money-step__no">04 · Payments</span>
                 <div>
                   <h3>
-                    Agents pay suppliers per call <small>x402</small>
+                    Agents pay suppliers per call <small>One call at a time</small>
                   </h3>
                   <p>
-                    Search, AI models and checks are bought with x402 on Celo.
-                    Payout addresses are pinned and screened before anything is
-                    signed, and every payment carries the hackathon attribution
-                    tag.
+                    Search, AI models and checks are bought one call at a time
+                    on Celo. We only pay sellers the CFO has approved, and
+                    every payment is tagged for the hackathon.
                   </p>
-                  <p className="mono mf-stat"><span className="dot" /> 0 paid · 0 settled on Celo · seller registry empty — no sellers pinned yet</p>
+                  <p className="mono mf-stat"><span className="dot" /> 0 paid · 0 settled on Celo · no sellers approved yet</p>
                 </div>
               </div>
               <div className="card money-step">
                 <span className="money-step__no">05 · Audit trail</span>
                 <div>
                   <h3>
-                    Every decision is signed <small>hash-chained</small>
+                    Every decision is signed <small>The full record</small>
                   </h3>
                   <p>
-                    Each decision is hash-chained to the one before and signed
-                    by the CFO&rsquo;s key, and its hash rides on the vault
-                    transaction. Anyone can replay the log.
+                    Each decision is linked to the one before it and signed by
+                    the CFO, and its fingerprint rides on the vault
+                    transaction. Anyone can read the log and check it.
                   </p>
-                  <p className="mono mf-stat">0x… · 0 entries · verified ✓</p>
+                  <p className="mono mf-stat">No entries yet · checks out ✓</p>
                 </div>
               </div>
             </div>
             <div className="mf-bar">
               <p>
-                <b>Autonomous, inside hard limits.</b> The CFO acts alone only
-                up to a limit the owner sets on the vault. Anything bigger is a
-                proposal that only the owner&rsquo;s wallet can co-sign on Celo,
-                and no language model ever touches the money.
+                <b>The CFO works on its own, inside hard limits.</b> It can only
+                move money up to a limit the owner set on the vault. Anything
+                bigger is a proposal that only the owner's wallet can sign
+                off on Celo — and no language model ever touches the money.
               </p>
               <span className="mf-links">
                 <a href="/api/cfo" className="pill green">The signed log <span className="pill__ic">→</span></a>
@@ -632,16 +627,16 @@ export default function Home() {
               <span className="mf-new mono">New</span>
               <p>
                 <b>Ikenga Pay — the naira leg.</b> The same escrow rules, for a
-                real naira bill: USDT converts to cNGN on Textile FX and the
-                supplier is paid in cNGN — only after the agent&rsquo;s Self
-                Agent ID is verified.
+                real naira bill: USDT changes to cNGN on Textile FX and the
+                supplier is paid in cNGN — only after we've checked the
+                agent's Self ID.
               </p>
               <a href="#pay" className="pill dark">How the naira leg works <span className="pill__ic">→</span></a>
             </div>
           </div>
         </section>
 
-        {/* 07 · The team — Syncly's pinned stage, as a stage header + grid */}
+        {/* 07 · The team — a stage header + grid */}
         <section className="section tight" id="team">
           <div className="wrap">
             <div className="shead" style={{ textAlign: "left", margin: "0 0 40px" }}>
@@ -672,17 +667,16 @@ export default function Home() {
                     <p className="buys">
                       Buys <b>{a.buys}</b> · Pays with <b>{a.pays}</b>
                     </p>
-                    <p className="mono agent-stat"><span className="dot" /> 0 paid calls · waiting for the first one</p>
+                    <p className="mono agent-stat"><span className="dot" /> Still waiting for its first paid job</p>
                   </div>
                 </div>
               ))}
             </div>
             <p style={{ marginTop: 20, color: "var(--muted)", fontSize: 14, lineHeight: 1.6 }}>
-              Tool sellers: the registry is empty — a seller is pinned only
-              when the user approves that tool, so no agent can pay an
-              unapproved supplier. On the team, waiting for their first paid
-              call — the agents are built and gated by Self Agent ID, but no
-              agent has been paid yet.
+              About the tools the agents buy: we haven't approved any sellers
+              yet. A seller only gets paid once we've approved that tool — so
+              no agent can pay someone we haven't checked. The team is built
+              and Self ID-checked, but nobody's been paid yet.
             </p>
           </div>
         </section>
@@ -712,7 +706,7 @@ export default function Home() {
                 payment on Celo.
               </p>
               <div className="office-bar mono">
-                <span><span className="dot" /> Ikenga HQ · every movement is a real event</span>
+                <span><span className="dot" /> Ikenga HQ · every step is a real event</span>
                 <span>The live office opens with the first job</span>
               </div>
             </div>
@@ -729,7 +723,7 @@ export default function Home() {
               </h2>
               <p style={{ marginTop: 16, fontSize: "var(--lede)", color: "var(--ink-2)" }}>
                 Still unsure?{" "}
-                <a href="https://github.com/vickman787/ikenga/blob/main/docs/spec.md">Read the spec</a>
+                <a href="https://github.com/vickman787/ikenga/blob/main/docs/spec.md">Read how it works</a>
                 , or order the $1 job you need most and see for yourself.
               </p>
             </div>
@@ -770,11 +764,11 @@ export default function Home() {
                   <p className="close-art__big">$1</p>
                   <p className="close-art__sub">Every job. Fixed before you pay.</p>
                   <div className="close-art__rows">
-                    <div><span>In escrow until you accept</span><b>$1 USDT</b></div>
-                    <div><span>CFO bond if you reject</span><b>$0.10</b></div>
+                    <div><span>Held in escrow until you accept</span><b>$1 USDT</b></div>
+                    <div><span>Bond if you turn it down</span><b>$0.10</b></div>
                     <div><span>One free revision</span><b>included</b></div>
                   </div>
-                  <span className="chip live"><span className="dot" /> Escrow · CFO · Self-verified agents</span>
+                  <span className="chip live"><span className="dot" /> Escrow · CFO · Self-checked agents</span>
                 </div>
               </div>
             </div>
@@ -791,8 +785,8 @@ export default function Home() {
             <p style={{ marginTop: 12 }}>
               Your business&rsquo;s AI team: websites, flyers, promo videos and
               a money report, $1 a job. Pay in USDT or cNGN, only if you
-              accept. An AI CFO runs the money, inside limits a smart contract
-              on Celo enforces.
+              accept. An AI CFO runs the money, and a contract on Celo keeps
+              it honest.
             </p>
           </div>
           <div className="foot-col">
@@ -836,7 +830,7 @@ export default function Home() {
         </div>
         <div className="wrap foot-base mono">
           <span>© 2026 Ikenga</span>
-          <span>Settled in USDT on Celo · Attribution celo_5144280c393f</span>
+          <span>Paid in USDT on Celo</span>
         </div>
       </footer>
     </>

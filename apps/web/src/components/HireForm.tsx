@@ -61,8 +61,8 @@ export default function HireForm() {
       </span>
       <h2 style={{ fontSize: 24, marginTop: 14 }}>Every job costs $1.</h2>
       <p style={{ marginTop: 8, color: "var(--ink-2)", lineHeight: 1.6 }}>
-        You pay into escrow and only pay if you accept the work. If you reject
-        it, you are refunded — plus a bond the CFO puts up.
+        You pay into escrow and only pay if you accept the work. If you turn
+        it down, you get your money back — plus a bond the CFO puts up.
       </p>
 
       <form onSubmit={submit} style={{ marginTop: 24, display: "grid", gap: 20 }}>
@@ -103,7 +103,7 @@ export default function HireForm() {
         <div>
           <label htmlFor="wallet" className="field">
             Your Celo wallet address
-            <span className="hint">Only the paying wallet can accept or reject the work.</span>
+            <span className="hint">Only the wallet that pays can accept or turn down the work.</span>
           </label>
           <input
             id="wallet"
@@ -118,11 +118,11 @@ export default function HireForm() {
         {error && <p className="error">{error}</p>}
 
         <button type="submit" disabled={busy} className="btn leaf lg block">
-          {busy ? "Asking the CFO…" : "Hire Ikenga — $1"}
+          {busy ? "Checking with the CFO…" : "Hire Ikenga — $1"}
         </button>
         <p className="note" style={{ textAlign: "center" }}>
-          Step 1 demo: your job is stored in this server&apos;s memory only. No
-          money moves.
+          No money moves yet — this saves your job here so you can see the
+          price and the CFO&apos;s decision.
         </p>
       </form>
 
@@ -141,12 +141,12 @@ export default function HireForm() {
             Job created — {result.id}
           </p>
           <p style={{ marginTop: 6 }}>
-            {JOB_LABELS[result.jobType]} · ${result.priceUsdc} · CFO bond $
-            {result.bondUsdc}
+            {JOB_LABELS[result.jobType]} · ${result.priceUsdc} · bond the CFO
+            puts up ${result.bondUsdc}
           </p>
           <p style={{ marginTop: 6, color: "var(--ink-2)" }}>{result.cfoReason}</p>
           <p className="mono" style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", wordBreak: "break-all" }}>
-            CFO decision hash: {result.decisionHash}
+            The CFO&apos;s decision, written down: {result.decisionHash}
           </p>
           <p style={{ marginTop: 12 }}>
             <a href={`/jobs/${result.id}`} style={{ fontWeight: 700, color: "var(--accent-ink)" }}>
