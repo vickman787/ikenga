@@ -25,7 +25,8 @@ describe("runMarketReport (fake models + fake search)", () => {
       "You are Researcher": "Plan: compare Paystack and Flutterwave on fees and reach.",
       "You are Writer": "# Payment options in Nigeria\n\nPaystack charges 1.5% per local transaction. Flutterwave was founded in 2016.\n\nSources:\n1. Paystack\n2. Flutterwave",
       "You are Analyst": "Paystack 1.5% — in sources. Flutterwave 2016 — in sources. ALL NUMBERS CHECK OUT",
-      "You are Auditor": "PASS\nThe report only uses facts from the sources.",
+      "checking the facts": "FACTS_OK\nEvery fact in the report is in the sources.",
+      "final read": "PASS\nThe report only uses facts from the sources.",
     });
     const result = await runMarketReport(
       { brief: "Compare payment options for my shop in Lagos" },
@@ -42,7 +43,7 @@ describe("runMarketReport (fake models + fake search)", () => {
     expect(result.sources.length).toBeGreaterThan(0);
     expect(result.sources.every((s) => s.url.startsWith("https://"))).toBe(true);
     const agents = result.steps.map((s) => s.agent);
-    expect(agents).toEqual(["Scout", "Researcher", "Writer", "Analyst", "Auditor"]);
+    expect(agents).toEqual(["Scout", "Researcher", "Writer", "Analyst", "Auditor", "Auditor"]);
     // Auditor runs on a different model from the Writer.
     const writerModel = calls.find((c) => c.prompt.includes("You are Writer"))?.model;
     const auditorModel = calls.find((c) => c.prompt.includes("You are Auditor"))?.model;
@@ -57,12 +58,16 @@ describe("runMarketReport (fake models + fake search)", () => {
       "You are Researcher": "Plan: compare the two.",
       "You are Writer": "# Report\n\nPaystack charges 1.5%.",
       "You are Analyst": "ALL NUMBERS CHECK OUT",
-      "You are Auditor": "FIX\nThe report needs a line about who each option fits.",
+      "final read": "FIX\nThe report needs a line about who each option fits.",
     });
     const countingChat = async (input: Parameters<typeof chat>[0]) => {
       if (input.messages[0].content.includes("You are Writer")) writerCalls += 1;
-      // Second Auditor call passes.
-      if (input.messages[0].content.includes("You are Auditor") && writerCalls >= 2) {
+      // The facts read-through passes both times.
+      if (input.messages[0].content.includes("checking the facts")) {
+        return { model: input.model, text: "FACTS_OK\nAll facts check out.", usage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 }, costUsd: 0.001 };
+      }
+      // Second final read passes, after the revision.
+      if (input.messages[0].content.includes("final read") && writerCalls >= 2) {
         return { model: input.model, text: "PASS\nFixed.", usage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 }, costUsd: 0.001 };
       }
       return chat(input);
@@ -91,7 +96,8 @@ describe("runReportStage (chunked, one stage per call)", () => {
       "You are Researcher": "Plan: compare Paystack and Flutterwave on fees and reach.",
       "You are Writer": "# Payment options in Nigeria\n\nPaystack charges 1.5% per local transaction. Flutterwave was founded in 2016.\n\nSources:\n1. Paystack\n2. Flutterwave",
       "You are Analyst": "Paystack 1.5% — in sources. Flutterwave 2016 — in sources. ALL NUMBERS CHECK OUT",
-      "You are Auditor": "PASS\nThe report only uses facts from the sources.",
+      "checking the facts": "FACTS_OK\nEvery fact in the report is in the sources.",
+      "final read": "PASS\nThe report only uses facts from the sources.",
     });
     return {
       chat,
@@ -114,11 +120,11 @@ describe("runReportStage (chunked, one stage per call)", () => {
       p = JSON.parse(JSON.stringify(p)) as typeof p;
       p = await runReportStage(p, stageDeps());
     }
-    expect(stages).toEqual([1, 2, 3, 4]);
+    expect(stages).toEqual([1, 2, 3, 4, 5]);
     expect(p.status).toBe("delivered");
     expect(p.stage).toBe(0);
     expect(p.report).toContain("Paystack charges 1.5%");
-    expect(p.steps.map((s) => s.agent)).toEqual(["Scout", "Researcher", "Writer", "Analyst", "Auditor"]);
+    expect(p.steps.map((s) => s.agent)).toEqual(["Scout", "Researcher", "Writer", "Analyst", "Auditor", "Auditor"]);
     expect(p.totalCostUsd).toBeLessThan(REPORT_MODEL_BUDGET_USD);
   });
 
@@ -139,7 +145,7 @@ describe("runReportStage (chunked, one stage per call)", () => {
       q = await runReportStage(q, deps);
     }
     // No new Scout stage: the pages were reused.
-    expect(stages).toEqual([2, 3, 4]);
+    expect(stages).toEqual([2, 3, 4, 5]);
     expect(q.status).toBe("delivered");
     expect(q.revisions).toBe(0);
   });

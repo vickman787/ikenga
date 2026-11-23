@@ -19,11 +19,11 @@ import {
  *
  * A whole job takes ~100s and the free plan cuts a request off at
  * 60s, so the run is split: read the brief (or search the market),
- * then build it, then check it, then the read-through (and a second
- * read-through if the first one asked for fixes). Each stage is one
- * short request that saves its work and says which stage is next; the
- * job page calls this route until the work is delivered. Nothing here
- * blocks for the whole job.
+ * then build it, then check it, then the read-through in two short
+ * parts (and a second read-through if the first one asked for fixes).
+ * Each stage is one short request that saves its work and says which
+ * stage is next; the job page calls this route until the work is
+ * delivered. Nothing here blocks for the whole job.
  */
 export const maxDuration = 60;
 

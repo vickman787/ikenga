@@ -23,12 +23,22 @@
  * Chunked runs (Step 3): one whole report takes ~100s, and the free
  * hosting plan cuts a request off at 60s. So the run is split into short
  * stages — Scout, then plan + write, then the numbers check, then the
- * read-through (and a second read-through if the first one asked for
- * fixes). Each stage is one request, saves its work, and says which
- * stage is next. `runReportStage` runs one stage from saved progress;
- * `runMarketReport` just runs the stages one after another, for the
- * local command line. A customer's revision re-runs the write and
- * read-through stages, reusing the pages Scout already read.
+ * read-through in two small parts (facts first, then a final read), and
+ * a revision + second read-through if the first one asked for fixes.
+ * Each stage is one request with ONE model call, saves its work, and
+ * says which stage is next. `runReportStage` runs one stage from saved
+ * progress; `runMarketReport` just runs the stages one after another,
+ * for the local command line. A customer's revision re-runs the write
+ * and read-through stages, reusing the pages Scout already read.
+ *
+ * Why the read-through is two stages: the Auditor used to read the
+ * whole report, the numbers check and all the sources in one call on
+ * a slow model, and that call regularly ran past the 60s limit — 17
+ * straight timeouts on the live site on 2026-11-23, a 20+ minute run.
+ * So the report is capped at 500 words, the Auditor now runs on the
+ * faster DeepSeek Flash, and its work is split: one short call checks
+ * the facts against the sources, a second short call gives the final
+ * read. Each call is small enough to finish inside 60s.
  *
  * The chat and search calls are injectable, so tests can run the whole
  * flow with fakes and never spend a cent or touch the network.
@@ -50,16 +60,27 @@ export const REPORT_MAX_REVISIONS = 1;
 export const REPORT_STAGE_SCOUT = 1;
 export const REPORT_STAGE_WRITE = 2;
 export const REPORT_STAGE_CHECK = 3;
-export const REPORT_STAGE_AUDIT = 4;
-export const REPORT_STAGE_REAUDIT = 5;
+/** Auditor, part 1: check the facts against the sources. */
+export const REPORT_STAGE_AUDIT_FACTS = 4;
+/** Auditor, part 2: final read — wording, completeness, PASS or FIX. */
+export const REPORT_STAGE_AUDIT_FINAL = 5;
+/** Writer fixes exactly what the final read flagged (one Nemotron call). */
+export const REPORT_STAGE_REVISE = 6;
+/** Second read-through of the revised report: facts again. */
+export const REPORT_STAGE_REAUDIT_FACTS = 7;
+/** Second read-through of the revised report: final read again. */
+export const REPORT_STAGE_REAUDIT_FINAL = 8;
 
 /** Plain-words labels for each stage, for the job page. */
 export const REPORT_STAGE_LABELS: Record<number, string> = {
   [REPORT_STAGE_SCOUT]: "Scout is looking the market up",
   [REPORT_STAGE_WRITE]: "Writer is writing the report",
   [REPORT_STAGE_CHECK]: "Analyst is checking the numbers",
-  [REPORT_STAGE_AUDIT]: "A different model is reading it before it reaches you",
-  [REPORT_STAGE_REAUDIT]: "Reading the revised report again",
+  [REPORT_STAGE_AUDIT_FACTS]: "A different model is checking the facts",
+  [REPORT_STAGE_AUDIT_FINAL]: "A different model is giving it a final read",
+  [REPORT_STAGE_REVISE]: "Writer is fixing what was flagged",
+  [REPORT_STAGE_REAUDIT_FACTS]: "Checking the revised facts again",
+  [REPORT_STAGE_REAUDIT_FINAL]: "Giving the revised report a final read",
 };
 
 export function reportStageLabel(stage: number): string {
@@ -107,6 +128,10 @@ export interface ReportProgress {
   plan: string;
   report: string;
   checkText: string;
+  /** What the facts read-through said (FACTS_OK / FACTS_FIX + notes). */
+  auditFacts: string;
+  /** What the final read said (PASS / FIX + notes). */
+  auditFinal: string;
   steps: ReportStep[];
   sources: ReportSource[];
   totalTokens: number;
@@ -126,6 +151,8 @@ export function emptyReportProgress(brief: string, revisionNote?: string): Repor
     plan: "",
     report: "",
     checkText: "",
+    auditFacts: "",
+    auditFinal: "",
     steps: [],
     sources: [],
     totalTokens: 0,
@@ -191,8 +218,25 @@ function stripCodeFences(text: string): string {
   return text.replace(/^```[a-z]*\n?/gim, "").replace(/```$/gm, "").trim();
 }
 
-function auditPrompt(report: string, checkText: string, sourceText: string): string {
-  return `You are Auditor, reading a market report before it reaches the customer. You are a different model from the one that wrote it.\n\nThe report:\n${report}\n\nThe numbers check:\n${checkText}\n\nThe sources:\n${sourceText}\n\nAnswer with exactly one line first: PASS or FIX. Then, if FIX, say in plain words what is wrong and what must change. Only judge it against the sources — a fact that is in the sources is fine, a fact that is not is a problem.`;
+/**
+ * Shorter source extracts for the Auditor: the facts read-through only
+ * needs enough to check a claim, not the full pages the Writer had.
+ * Keeps the audit calls small so they finish inside 60s.
+ */
+function auditSourcesText(pages: SourcePage[]): string {
+  return pages
+    .map((p, i) => `[${i + 1}] ${p.title} — ${p.url}\n${p.text.slice(0, 800)}`)
+    .join("\n\n");
+}
+
+/** Auditor, part 1: are the facts in the report actually in the sources? */
+function auditFactsPrompt(report: string, checkText: string, sourceText: string): string {
+  return `You are Auditor, checking the facts in a market report before it reaches the customer. You are a different model from the one that wrote it.\n\nThe report:\n${report}\n\nThe numbers check:\n${checkText}\n\nThe sources:\n${sourceText}\n\nAnswer with exactly one line first: FACTS_OK or FACTS_FIX. Then, if FACTS_FIX, list in plain words each fact that is not in the sources, or that the sources disagree with. Only judge facts against the sources — do not judge the writing.`;
+}
+
+/** Auditor, part 2: final read — wording, completeness, PASS or FIX. */
+function auditFinalPrompt(report: string, checkText: string, factsText: string): string {
+  return `You are Auditor, giving a market report its final read before it reaches the customer. You are a different model from the one that wrote it. The facts were already checked against the sources — do not re-check them, use the verdict below.\n\nThe report:\n${report}\n\nThe numbers check:\n${checkText}\n\nThe facts check:\n${factsText}\n\nAnswer with exactly one line first: PASS or FIX. Then, if FIX, say in plain words what is wrong and what must change. Judge the wording and whether the report is complete and clear for a small business owner — a fact the facts check already passed is fine.`;
 }
 
 /**
@@ -329,11 +373,11 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
     p.plan = stripCodeFences(plan.text);
     p.steps[p.steps.length - 1].detail = p.plan.slice(0, 400);
 
-    const writePrompt = `You are Writer, writing a market report for a small business owner in Nigeria. Write in plain, warm, human words — no jargon, no filler. Write the report ENTIRELY in your own words.\n\nThe job: ${brief}\n${p.revisionNote ? `The customer asked for a change: ${p.revisionNote}\n` : ""}\nThe plan:\n${p.plan}\n\n--- SOURCES (fact-checking only — do NOT copy, paste or quote them) ---\n${sourceText}\n--- END OF SOURCES ---\n\nWrite the report as markdown with these parts:\n- A short summary (2–3 sentences): what you found, in plain words.\n- The businesses or options found, each with what they do and any price you actually found. If a price was not in the sources, write "price not listed" — never guess a price.\n- What it means for the customer: which option fits what kind of business, and why.\n- Things to watch out for: anything the sources disagree on, or that could not be checked.\n- Sources: list them by number and title with their link, exactly as given above.\n\nRules: under 800 words. Every fact must come from the sources above — do not invent any business, price, number or fact. If something is not in the sources, say so. Never paste the source text into the report.`;
+    const writePrompt = `You are Writer, writing a market report for a small business owner in Nigeria. Write in plain, warm, human words — no jargon, no filler. Write the report ENTIRELY in your own words.\n\nThe job: ${brief}\n${p.revisionNote ? `The customer asked for a change: ${p.revisionNote}\n` : ""}\nThe plan:\n${p.plan}\n\n--- SOURCES (fact-checking only — do NOT copy, paste or quote them) ---\n${sourceText}\n--- END OF SOURCES ---\n\nWrite the report as markdown with these parts:\n- A short summary (2–3 sentences): what you found, in plain words.\n- The businesses or options found, each with what they do and any price you actually found. If a price was not in the sources, write "price not listed" — never guess a price.\n- What it means for the customer: which option fits what kind of business, and why.\n- Things to watch out for: anything the sources disagree on, or that could not be checked.\n- Sources: list them by number and title with their link, exactly as given above.\n\nRules: under 500 words. Every fact must come from the sources above — do not invent any business, price, number or fact. If something is not in the sources, say so. Never paste the source text into the report.`;
     if (!withinBudget(FORTYTWO_MODEL_WORK, writePrompt, 1800)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const draft = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: writePrompt }], maxTokens: 1800 });
+    const draft = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: writePrompt }], maxTokens: 1200 });
     charge(draft, "Writer", "Wrote the report from the plan and the sources.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     p.steps[p.steps.length - 1].detail = `About ${draft.text.split(/\s+/).length} words, from ${p.pages.length} sources.`;
@@ -352,20 +396,40 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     p.checkText = stripCodeFences(check.text);
     p.steps[p.steps.length - 1].detail = p.checkText.slice(-300);
-    return { ...p, stage: REPORT_STAGE_AUDIT };
+    return { ...p, stage: REPORT_STAGE_AUDIT_FACTS };
   }
 
-  // --- Stages 4 and 5, Auditor: a different model reads it and says pass or fix. ---
-  if (p.stage === REPORT_STAGE_AUDIT || p.stage === REPORT_STAGE_REAUDIT) {
-    const isReaudit = p.stage === REPORT_STAGE_REAUDIT;
-    const prompt = auditPrompt(p.report, p.checkText, sourceText);
+  // --- Stages 4 and 7, Auditor part 1: check the facts, one short call. ---
+  if (p.stage === REPORT_STAGE_AUDIT_FACTS || p.stage === REPORT_STAGE_REAUDIT_FACTS) {
+    const isReaudit = p.stage === REPORT_STAGE_REAUDIT_FACTS;
+    const prompt = auditFactsPrompt(p.report, p.checkText, auditSourcesText(p.pages));
     if (!withinBudget(FORTYTWO_MODEL_AUDIT, prompt, 600)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const audit = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 1500, reasoningEffort: "low" });
+    const facts = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 600, reasoningEffort: "low" });
+    charge(facts, "Auditor", isReaudit ? "Checked the revised facts against the sources." : "Checked every fact against the sources.");
+    if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
+    const factsText = stripCodeFences(facts.text);
+    p.auditFacts = factsText;
+    p.steps[p.steps.length - 1].detail = factsText.slice(0, 400);
+    return { ...p, stage: isReaudit ? REPORT_STAGE_REAUDIT_FINAL : REPORT_STAGE_AUDIT_FINAL };
+  }
+
+  // --- Stages 5 and 8, Auditor part 2: final read, PASS or FIX. ---
+  // The facts are already checked, so this call gets no sources — just
+  // the report, the numbers check and the facts verdict. Small in, small
+  // out, so it finishes inside 60s.
+  if (p.stage === REPORT_STAGE_AUDIT_FINAL || p.stage === REPORT_STAGE_REAUDIT_FINAL) {
+    const isReaudit = p.stage === REPORT_STAGE_REAUDIT_FINAL;
+    const prompt = auditFinalPrompt(p.report, p.checkText, p.auditFacts);
+    if (!withinBudget(FORTYTWO_MODEL_AUDIT, prompt, 800)) {
+      return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
+    }
+    const audit = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 800, reasoningEffort: "low" });
     charge(audit, "Auditor", isReaudit ? "Read the revised report again." : "Read the report on a different model, before it reaches you.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     const auditText = stripCodeFences(audit.text);
+    p.auditFinal = auditText;
     p.steps[p.steps.length - 1].detail = auditText.slice(0, 400);
     // The Auditor may answer "**PASS**" or "PASS — ..." — strip any leading
     // markdown/punctuation before reading the verdict.
@@ -378,18 +442,24 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
       p.steps.push({ agent: "Auditor", what: "Still had notes after one revision — the report is shown with them.", detail: auditText.slice(0, 400) });
       return deliver();
     }
-    // One free revision: Writer fixes what the Auditor flagged.
-    const fixPrompt = `You are Writer. The Auditor read your report and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe report:\n${p.report}\n\nThe sources (only use facts from here):\n${sourceText}\n\nReturn the full corrected report as markdown, same shape as before. Do not invent any fact.`;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, fixPrompt, 1800)) {
+    // One free revision: the next stage (a Writer call of its own) fixes
+    // exactly what the final read flagged.
+    return { ...p, stage: REPORT_STAGE_REVISE };
+  }
+
+  // --- Stage 6, Writer revises once, fixing what the final read flagged. ---
+  if (p.stage === REPORT_STAGE_REVISE) {
+    const fixPrompt = `You are Writer. The Auditor read your report and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${p.auditFinal}\n\nThe facts check said:\n${p.auditFacts}\n\nThe report:\n${p.report}\n\nThe sources (only use facts from here):\n${sourceText}\n\nReturn the full corrected report as markdown, same shape as before, under 500 words. Do not invent any fact.`;
+    if (!withinBudget(FORTYTWO_MODEL_WORK, fixPrompt, 1200)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const fixed = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: 1800 });
+    const fixed = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: 1200 });
     charge(fixed, "Writer", "Revised the report once, fixing what the Auditor flagged.");
     p.steps[p.steps.length - 1].detail = `Revised to about ${stripCodeFences(fixed.text).split(/\s+/).length} words.`;
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     p.report = stripCodeFences(fixed.text);
     p.revisions += 1;
-    return { ...p, stage: REPORT_STAGE_REAUDIT };
+    return { ...p, stage: REPORT_STAGE_REAUDIT_FACTS };
   }
 
   return p;

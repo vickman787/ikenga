@@ -12,8 +12,14 @@
  *
  * Models (prices per 1M tokens, verified from the FortyTwo docs 2026-11-22):
  *   nvidia/nemotron-3.5-super-vl  $0.15 in / $0.45 out  — the cheap workhorse
- *   qwen/qwen3.8-27b              $0.425 in / $2.55 out — the second opinion
- *   deepseek/deepseek-v4.1-flash-1017 $0.30 in / $1.20 out
+ *   deepseek/deepseek-v4.1-flash-1017 $0.30 in / $1.20 out — the fast second opinion
+ *   qwen/qwen3.8-27b              $0.425 in / $2.55 out — the previous Auditor
+ *
+ * The Auditor used to be Qwen3.8-27B, but it was too slow: on the live
+ * site a whole report's read-through regularly ran past the free plan's
+ * 60s step limit (17 straight timeouts on 2026-11-23), so the Auditor
+ * moved to DeepSeek Flash — still a different model family from the
+ * Writer's Nemotron, so one model never marks its own homework.
  */
 
 export const FORTYTWO_BASE_URL = "https://api.fortytwo.network/v1";
@@ -21,8 +27,9 @@ export const FORTYTWO_BASE_URL = "https://api.fortytwo.network/v1";
 /** Writer / Researcher / Analyst — cheapest, good enough for a report. */
 export const FORTYTWO_MODEL_WORK = "nvidia/nemotron-3.5-super-vl";
 /** Auditor — a different model, so one model never marks its own homework. */
-export const FORTYTWO_MODEL_AUDIT = "qwen/qwen3.8-27b";
-export const FORTYTWO_MODEL_CHEAP_ALT = "deepseek/deepseek-v4.1-flash-1017";
+export const FORTYTWO_MODEL_AUDIT = "deepseek/deepseek-v4.1-flash-1017";
+/** The previous Auditor model, kept as a fallback. */
+export const FORTYTWO_MODEL_CHEAP_ALT = "qwen/qwen3.8-27b";
 
 export const FORTYTWO_PRICES_USD_PER_MILLION: Record<string, { input: number; output: number }> = {
   "nvidia/nemotron-3.5-super-vl": { input: 0.15, output: 0.45 },

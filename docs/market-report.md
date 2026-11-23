@@ -12,9 +12,9 @@ one free revision, or turn it down.
 | --- | --- | --- | --- |
 | Scout | Finds businesses on the web and reads their pages | — (web search, free) | $0 |
 | Researcher | Turns the brief into a short plan | Nemotron 3.5 Super VL | ~$0.001 |
-| Writer | Writes the report in plain words, under 800 words | Nemotron 3.5 Super VL | ~$0.001 |
+| Writer | Writes the report in plain words, under 500 words | Nemotron 3.5 Super VL | ~$0.001 |
 | Analyst | Checks every number, price and date against the sources | Nemotron 3.5 Super VL | ~$0.001 |
-| Auditor | Reads the whole thing on a different model and passes it or sends it back | Qwen3.8-27B | ~$0.007 |
+| Auditor | Checks the facts, then gives a final read — on a different model, in two short calls so each fits in 60s | DeepSeek V4.1 Flash | ~$0.002 |
 
 A full report costs about **$0.01** in model calls (sample run:
 16,696 tokens, $0.0097, 0 revisions, Auditor passed first time).
@@ -46,7 +46,7 @@ model cap per job, same one-free-revision rule):
 | Designer | Reads the brief, pulls out the facts (business, services, prices, contact), then builds the one-page website or the printable flyer | Nemotron 3.5 Super VL |
 | Producer | Reads the brief and puts the promo slideshow together — 5 slides of the business's own words | Nemotron 3.5 Super VL |
 | Analyst | Checks every word, price and phone number against the brief | Nemotron 3.5 Super VL |
-| Auditor | Reads the work on a different model and passes it or sends it back once | Qwen3.8-27B |
+| Auditor | Reads the work on a different model and passes it or sends it back once | DeepSeek V4.1 Flash |
 
 A creative job costs a few cents (a website is roughly $0.01–0.02).
 Prices come from the brief or are shown as "price not listed" — never
@@ -73,8 +73,8 @@ identity check is still pending and the team can write but cannot be paid.
   Needs `FORTYTWO_API_KEY` on the server, or it says plainly that the AI
   is not connected yet. Answers straight away (202) with the next stage.
 - `POST /api/jobs/[id]/run/step` — runs ONE stage (under 60s). The job
-  page calls it until the work is delivered. A whole job takes about
-  90–150 seconds across 4–5 stages.
+  page calls it until the work is delivered. A whole report takes a few
+  minutes across 5 short stages (8 if a revision is needed).
 - `POST /api/jobs/[id]/decision` — `{ action: "accept" | "reject" }`.
   Accept records the customer is happy; reject records a refund of the
   $1 plus the $0.10 bond.
@@ -95,4 +95,8 @@ identity check is still pending and the team can write but cannot be paid.
 - Jobs and deliveries live in Postgres when `DATABASE_URL` is set, in
   memory otherwise — on the live site today, a job made before the
   database is connected may be gone after a restart.
+- Qwen3.8-27B was the Auditor until 2026-11-23, when it moved to
+  DeepSeek V4.1 Flash — Qwen's read-through regularly ran past the
+  60s step limit (17 timeouts in one live run), so the audit was also
+  split into two short calls: facts first, then a final read.
 - The promo is a motion slideshow, not a video file.

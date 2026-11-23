@@ -64,6 +64,10 @@ export interface StoredReportData {
   plan?: string;
   checkText?: string;
   revisionNote?: string;
+  /** What the facts read-through said (market report). */
+  auditFacts?: string;
+  /** What the final read said (market report). */
+  auditFinal?: string;
   /** What kind of work this delivery is (a market report keeps "report"). */
   deliverableKind?: "report" | "website" | "flyer" | "slideshow";
   /** The generated website / flyer page (sanitised HTML). Empty for a slideshow. */

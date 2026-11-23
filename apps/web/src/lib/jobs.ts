@@ -167,6 +167,8 @@ export function reportToProgress(report: StoredReport, brief: string): ReportPro
     plan: report.plan ?? "",
     report: report.report,
     checkText: report.checkText ?? "",
+    auditFacts: report.auditFacts ?? "",
+    auditFinal: report.auditFinal ?? "",
     // A stored report only ever carries report agents; the stored
     // shape widened to cover creative agents too.
     steps: report.steps as ReportProgress["steps"],
@@ -196,6 +198,8 @@ export function progressToReport(progress: ReportProgress): StoredReport {
     pages: progress.pages,
     plan: progress.plan,
     checkText: progress.checkText,
+    auditFacts: progress.auditFacts,
+    auditFinal: progress.auditFinal,
     revisionNote: progress.revisionNote,
   };
 }
@@ -215,6 +219,8 @@ export function emptyStoredReport(): StoredReport {
     pages: [],
     plan: "",
     checkText: "",
+    auditFacts: "",
+    auditFinal: "",
   };
 }
 

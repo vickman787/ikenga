@@ -52,7 +52,8 @@ production server 200 with `/api/cfo`, `/api/traction`, `/api/jobs/[id]` live.
   the web for free — Bing first, Wikipedia backup — Researcher plans,
   Writer writes, Analyst checks the numbers, all on FortyTwo's Nemotron
   3.5 Super VL, then the Auditor reads it on a different model,
-  Qwen3.8-27B) plus the website and flyers (Designer builds a real page
+  DeepSeek V4.1 Flash, in two short calls — facts first, then a final
+  read) plus the website and flyers (Designer builds a real page
   from the brief, Analyst checks every word and price against it,
   Auditor reads it) and the promo video (Producer puts a motion
   slideshow together — moving slides, honestly labelled, not a video
