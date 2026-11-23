@@ -348,6 +348,7 @@ export default function HireForm() {
   const [currency, setCurrency] = useState<PayCurrency>("USDT");
   const [quote, setQuote] = useState<{ priceDisplay: string; rate: string } | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteAttempt, setQuoteAttempt] = useState(0);
 
   // Which currencies this chain offers, and whether cNGN is actually
   // switched on (its vault has to be deployed first).
@@ -371,8 +372,14 @@ export default function HireForm() {
       return;
     }
     let live = true;
-    const load = () =>
-      fetch("/api/quote?currency=cNGN")
+    const load = () => {
+      // The rate request used to have no timeout: a stalled request sat
+      // on "loading the rate…" forever with no error and no way to retry.
+      // Give up after 10 seconds so the customer sees the error and can
+      // try again (the 30 s refresh below keeps retrying on its own).
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), 10_000);
+      fetch("/api/quote?currency=cNGN", { signal: controller.signal })
         .then((r) => r.json())
         .then((d) => {
           if (!live) return;
@@ -389,14 +396,16 @@ export default function HireForm() {
             setQuote(null);
             setQuoteError("Could not read the naira rate right now.");
           }
-        });
+        })
+        .finally(() => clearTimeout(abortTimer));
+    };
     load();
     const timer = setInterval(load, 30_000);
     return () => {
       live = false;
       clearInterval(timer);
     };
-  }, [currency]);
+  }, [currency, quoteAttempt]);
 
   const cngnReady = chain?.payTokens.includes("cNGN") && Boolean(chain?.vaults.cNGN);
 
@@ -516,7 +525,17 @@ export default function HireForm() {
             </p>
           )}
           {currency === "cNGN" && quoteError && (
-            <p style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>{quoteError} Pay in USDT for now.</p>
+            <p style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+              {quoteError}{" "}
+              <button
+                type="button"
+                onClick={() => setQuoteAttempt((n) => n + 1)}
+                style={{ textDecoration: "underline", background: "none", border: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
+              >
+                Try again
+              </button>{" "}
+              — or pay in USDT for now.
+            </p>
           )}
           {chain?.payTokens.includes("cNGN") && !cngnReady && (
             <p style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
