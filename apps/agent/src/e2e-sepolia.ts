@@ -11,7 +11,8 @@
  * AgentRunner job with the real Self gate, paid one $0.01 USDC x402
  * settlement on Sepolia (live-gated test path), and recorded everything
  * in the ledger with tx hashes. Escrow/vault on Sepolia run only when
- * the contracts are deployed and deployments/celo.json records them.
+ * the contracts are deployed and deployments/celo-sepolia.json records them.
+ * That file is gitignored (local-only): never push deployed addresses.
  *
  * Blocked today (no keys in this VM — see the report): no X402_API_KEY,
  * no funded test wallet, no registered Self agent, no deployed Sepolia
@@ -54,12 +55,12 @@ async function main(): Promise<number> {
   // 2. Deployed contracts?
   let deployed: { escrow?: string; vault?: string } = {};
   try {
-    const raw = JSON.parse(readFileSync(new URL("../../contracts/deployments/celo.json", import.meta.url), "utf8"));
-    deployed = { escrow: raw.escrow ?? undefined, vault: raw.vault ?? undefined };
+    const raw = JSON.parse(readFileSync(new URL("../../contracts/deployments/celo-sepolia.json", import.meta.url), "utf8"));
+    deployed = { escrow: raw.escrow ?? raw.JobEscrow ?? undefined, vault: raw.vault ?? raw.IkengaVault ?? undefined };
   } catch {
     deployed = {};
   }
-  check("contracts-deployed-sepolia", Boolean(deployed.escrow && deployed.vault), deployed.escrow ? `escrow ${deployed.escrow}` : "contracts/deployments/celo.json has no Sepolia addresses — deploy first (user-approved, funded wallet needed)");
+  check("contracts-deployed-sepolia", Boolean(deployed.escrow && deployed.vault), deployed.escrow ? `escrow ${deployed.escrow}` : "contracts/deployments/celo-sepolia.json has no Sepolia addresses — deploy first (funded wallet needed)");
 
   // 3. x402 live settlement needs a key + funded wallet + payee.
   const x402Ready = Boolean(process.env.X402_API_KEY && process.env.IKENGA_TEST_PRIVATE_KEY && process.env.IKENGA_LIVE_PAY_TO);
