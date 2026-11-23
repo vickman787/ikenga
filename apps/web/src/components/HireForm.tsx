@@ -590,11 +590,16 @@ export default function HireForm() {
         {error && <p className="error">{error}</p>}
 
         <button type="submit" disabled={busy || !account} className="btn leaf lg block">
-          {busy ? "Checking with the CFO…" : "Hire Ikenga — $1"}
+          {busy
+            ? "Checking with the CFO…"
+            : currency === "cNGN" && quote
+              ? `Hire Ikenga — about ${quote.priceDisplay}`
+              : "Hire Ikenga — $1"}
         </button>
         <p className="note" style={{ textAlign: "center" }}>
-          First you connect your wallet, then you pay $1 into escrow. The
-          work only starts once your $1 is in.
+          First you connect your wallet, then you pay{" "}
+          {currency === "cNGN" && quote ? `about ${quote.priceDisplay}` : "$1"} into escrow. The
+          work only starts once the money is in.
         </p>
       </form>
 

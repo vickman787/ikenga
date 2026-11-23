@@ -615,11 +615,18 @@ export function progressToCreative(progress: CreativeProgress): StoredReport {
  */
 export interface CreateHireDeps {
   previewCngnUsd?: () => Promise<string>;
+  /**
+   * Test seam: use this chain config instead of getChainConfig(). Lets a
+   * test exercise a config the live repo no longer has — e.g. mainnet
+   * with the cNGN vault not deployed yet — without touching the committed
+   * deployment file. Live runs never pass it.
+   */
+  chainConfig?: ChainConfig;
 }
 
 export async function createHire(input: HireInput, deps: CreateHireDeps = {}): Promise<HireResult> {
   const parsed = HireInputSchema.parse(input);
-  const config = getChainConfig();
+  const config = deps.chainConfig ?? getChainConfig();
   // The currency defaults to the chain's own: USDT on mainnet, test
   // USDC on Sepolia. Anything else must be offered on this chain.
   const currency = (parsed.payCurrency ?? config.tokenSymbol) as PayCurrency;

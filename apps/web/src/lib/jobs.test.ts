@@ -82,9 +82,9 @@ describe("getChainConfig", () => {
           USDT: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
           cNGN: "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f",
         },
-        // The cNGN vault is not deployed yet (see DeployCngnVault.s.sol),
-        // so there is no cNGN vault in the config until it is.
-        vaults: { USDT: "0x1C2b2E64527B0bA7795ed3CDF7d76da51D24018B" },
+        // The cNGN vault is deployed (see DeployCngnVault.s.sol), so it
+        // is in the config alongside the USDT vault.
+        vaults: { USDT: "0x1C2b2E64527B0bA7795ed3CDF7d76da51D24018B", cNGN: "0x5D649BBd5fAb11ABf28817A3be62bc5991772B1E" },
       });
     } finally {
       restoreEnv();
@@ -327,13 +327,17 @@ describe("createHire payment currency (USDT / cNGN)", () => {
 
   it("refuses cNGN when the cNGN vault is not deployed yet", async () => {
     setLedgerForTests(new MemoryLedger());
-    delete process.env.IKENGA_CNGN_VAULT_ADDRESS;
-    delete process.env.IKENGA_CHAIN;
+    // The live repo now HAS a cNGN vault (see celo.json), so the "not
+    // deployed" state can't be reached through env alone — pass a config
+    // without it instead, the same shape getChainConfig() returned
+    // before the vault was deployed.
+    const liveConfig = getChainConfig();
+    const noCngnConfig = { ...liveConfig, vaults: { USDT: liveConfig.vaults.USDT } };
     try {
       await expect(
         createHire(
           { jobType: "website", description: "A site", customerWallet: WALLET, payCurrency: "cNGN" },
-          { previewCngnUsd: async () => "1444067000" },
+          { previewCngnUsd: async () => "1444067000", chainConfig: noCngnConfig },
         ),
       ).rejects.toThrow(/aren't switched on yet/);
     } finally {
