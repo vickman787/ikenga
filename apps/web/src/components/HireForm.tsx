@@ -506,11 +506,13 @@ export default function HireForm() {
                   <span className="price">
                     ·{" "}
                     {isCngn
-                      ? quote
-                        ? `about ${quote.priceDisplay}`
-                        : quoteError
-                          ? "rate not loading"
-                          : "loading the rate…"
+                      ? disabled
+                        ? "not on yet"
+                        : quote
+                          ? `about ${quote.priceDisplay}`
+                          : quoteError
+                            ? "rate not loading"
+                            : "loading the rate…"
                       : "$1"}
                   </span>
                 </button>
