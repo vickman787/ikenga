@@ -55,7 +55,7 @@ async function main(): Promise<number> {
   // 2. Deployed contracts?
   let deployed: { escrow?: string; vault?: string } = {};
   try {
-    const raw = JSON.parse(readFileSync(new URL("../../contracts/deployments/celo-sepolia.json", import.meta.url), "utf8"));
+    const raw = JSON.parse(readFileSync(new URL("../../../contracts/deployments/celo-sepolia.json", import.meta.url), "utf8"));
     deployed = { escrow: raw.escrow ?? raw.JobEscrow ?? undefined, vault: raw.vault ?? raw.IkengaVault ?? undefined };
   } catch {
     deployed = {};
