@@ -15,8 +15,8 @@
  * CFO running the money on Celo.
  */
 
-/** The on-chain ERC-8004 agentId for Ikenga on Celo mainnet. Null until registered. */
-export const IKENGA_AGENT_ID: number | null = null;
+/** The on-chain ERC-8004 agentId for Ikenga on Celo mainnet. Minted 2026-11-23, tx 0x4a27e75e4f84a8588789183e5330b7f2db628a999046d590cb2328aef3d782ef, block 83516978. */
+export const IKENGA_AGENT_ID: number | null = 10106;
 
 /** The IdentityRegistry Ikenga is registered on, as an EIP-8004 agentRegistry string. */
 export const IKENGA_AGENT_REGISTRY =
