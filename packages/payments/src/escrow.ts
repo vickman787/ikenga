@@ -154,3 +154,49 @@ export async function verifyTxReceipt(txHash: string, opts?: EscrowReadOptions):
   }
   return { ok: receipt.status === "success", from: receipt.from, to: receipt.to };
 }
+
+const VAULT_ABI = parseAbi([
+  "function bucketBalance(uint8 bucket) view returns (uint256)",
+]);
+
+export interface VaultOnchain {
+  /** False when there is no contract code at the vault address. */
+  exists: boolean;
+  /** Each pot's balance, in atomic units (6 decimals). Null when unreadable. */
+  buckets: { operating: bigint; tools: bigint; bond: bigint; reserve: bigint } | null;
+  /** The token the vault actually holds, in atomic units. Null when unreadable. */
+  tokenBalance: bigint | null;
+}
+
+/**
+ * Read IkengaVault's four pots straight from the chain, plus the token
+ * it holds. Bucket order is the contract's enum: OPERATING 0, TOOLS 1,
+ * BOND 2, RESERVE 3. Read-only: no key, no signing, no money moves.
+ */
+export async function readVaultOnchain(
+  vaultAddress: string,
+  tokenAddress: string,
+  opts?: EscrowReadOptions,
+): Promise<VaultOnchain> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(vaultAddress)) {
+    throw new Error("That vault address doesn't look like an address (0x… followed by 40 hex characters).");
+  }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(tokenAddress)) {
+    throw new Error("That token address doesn't look like an address (0x… followed by 40 hex characters).");
+  }
+  const vault = vaultAddress as Address;
+  const token = tokenAddress as Address;
+  const client = opts?.client ?? createEscrowClient({ rpcUrl: opts?.rpcUrl });
+  const code = await client.getCode({ address: vault });
+  if (!code || code === "0x") {
+    return { exists: false, buckets: null, tokenBalance: null };
+  }
+  const [operating, tools, bond, reserve, tokenBalance] = await Promise.all([
+    client.readContract({ address: vault, abi: VAULT_ABI, functionName: "bucketBalance", args: [0] }),
+    client.readContract({ address: vault, abi: VAULT_ABI, functionName: "bucketBalance", args: [1] }),
+    client.readContract({ address: vault, abi: VAULT_ABI, functionName: "bucketBalance", args: [2] }),
+    client.readContract({ address: vault, abi: VAULT_ABI, functionName: "bucketBalance", args: [3] }),
+    client.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [vault] }),
+  ]);
+  return { exists: true, buckets: { operating, tools, bond, reserve }, tokenBalance };
+}

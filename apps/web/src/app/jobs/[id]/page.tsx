@@ -373,9 +373,11 @@ export default function JobPage() {
       {!error && !data && <p style={{ marginTop: 24, color: "var(--muted)" }}>Loading your job…</p>}
       {data && (
         <>
-          <span className="chip live" style={{ marginTop: 24 }}>
-            <span className="dot" /> {data.job.status}
-          </span>
+          <div style={{ marginTop: 24 }}>
+            <span className="chip live">
+              <span className="dot" /> {data.job.status}
+            </span>
+          </div>
           <h1 style={{ fontSize: 36, marginTop: 14 }}>{JOB_LABELS[data.job.jobType]}</h1>
           <p style={{ marginTop: 10, fontSize: "var(--lede)", color: "var(--ink-2)", lineHeight: 1.6 }}>
             {data.job.description}

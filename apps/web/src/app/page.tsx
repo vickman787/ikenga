@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import HireForm from "@/components/HireForm";
 import Nav from "@/components/Nav";
 
@@ -8,9 +9,9 @@ import Nav from "@/components/Nav";
  * drawn in CSS). Built for Celo: Textile FX USDT ↔ cNGN, Self Agent ID
  * checks.
  *
- * Honesty rule: Ikenga has no finished jobs, customers or sellers yet,
- * so this page invents none. It says plainly that it is just getting
- * started.
+ * Honesty rule: the only finished job, customer and payment shown here
+ * are real ones, read live from the chain and the CFO's log. Nothing is
+ * invented — when there is nothing yet, the page says so.
  */
 
 const TEAM: { name: string; role: string; line: string; buys: string; pays: string }[] = [
@@ -60,7 +61,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Is Ikenga live on Celo mainnet yet?",
-    a: "Not yet, and we will not pretend otherwise. The money side is built and tested — the CFO's pricing, the log, the Celo payments and the Self ID check — and we have checked a live rate on Celo: $10 USDT comes out at about 14,440 cNGN. The escrow and vault are written but not switched on yet. They go live with our first real customer, on Celo mainnet.",
+    a: "Yes. The escrow and vault are deployed on Celo mainnet, and the first real $1 job has already been paid, delivered and accepted — the $1 sits in the vault, and you can follow it in the signed log below. We have also checked a live rate on Celo: $10 USDT comes out at about 14,440 cNGN.",
   },
   {
     q: "Is my information private?",
@@ -235,7 +236,92 @@ function HowArt({ kind }: { kind: "quote" | "escrow" | "receipt" | "decide" }) {
   );
 }
 
+/** One pot's live balance, in dollars, from /api/vault. */
+function fmtUsd(atomic: string): string {
+  return (Number(atomic) / 1_000_000).toFixed(2);
+}
+
+/**
+ * The live numbers behind the landing page — the vault's pots from the
+ * chain (/api/vault) and the job/decision counts from the CFO's log
+ * (/api/cfo). Null while loading; the page keeps its honest empty text
+ * until the real numbers arrive, and if a read fails it says so instead
+ * of showing a made-up number.
+ */
+interface LiveNumbers {
+  vault: { operating: string; tools: string; bond: string; reserve: string; total: string } | null;
+  vaultError: boolean;
+  decisions: number | null;
+  onchainDecisions: number | null;
+  verifyOk: boolean | null;
+  jobs: number | null;
+  done: number | null;
+  settled: number | null;
+  customers: number | null;
+  firstDoneJobId: string | null;
+}
+
+function useLiveNumbers(): LiveNumbers {
+  const [live, setLive] = useState<LiveNumbers>({
+    vault: null,
+    vaultError: false,
+    decisions: null,
+    onchainDecisions: null,
+    verifyOk: null,
+    jobs: null,
+    done: null,
+    settled: null,
+    customers: null,
+    firstDoneJobId: null,
+  });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [vaultRes, cfoRes] = await Promise.all([fetch("/api/vault"), fetch("/api/cfo")]);
+        const vaultJson = (await vaultRes.json().catch(() => null)) as {
+          buckets?: { operating: string; tools: string; bond: string; reserve: string };
+        } | null;
+        const cfoJson = (await cfoRes.json().catch(() => null)) as {
+          verify?: { ok: boolean; entries: number };
+          decisions?: { txHash: string | null }[];
+          summary?: { jobs: number; done: number; settled: number; customers: number; firstDoneJobId: string | null };
+        } | null;
+        if (cancelled) return;
+        setLive({
+          vault: vaultRes.ok && vaultJson?.buckets
+            ? {
+                ...vaultJson.buckets,
+                total: (
+                  ["operating", "tools", "bond", "reserve"] as const
+                ).reduce((sum, k) => sum + Number(vaultJson.buckets![k]), 0).toString(),
+              }
+            : null,
+          vaultError: !vaultRes.ok,
+          decisions: cfoRes.ok ? (cfoJson?.verify?.entries ?? null) : null,
+          onchainDecisions: cfoRes.ok
+            ? (cfoJson?.decisions?.filter((d) => d.txHash).length ?? null)
+            : null,
+          verifyOk: cfoRes.ok ? (cfoJson?.verify?.ok ?? null) : null,
+          jobs: cfoRes.ok ? (cfoJson?.summary?.jobs ?? null) : null,
+          done: cfoRes.ok ? (cfoJson?.summary?.done ?? null) : null,
+          settled: cfoRes.ok ? (cfoJson?.summary?.settled ?? null) : null,
+          customers: cfoRes.ok ? (cfoJson?.summary?.customers ?? null) : null,
+          firstDoneJobId: cfoRes.ok ? (cfoJson?.summary?.firstDoneJobId ?? null) : null,
+        });
+      } catch {
+        if (!cancelled) setLive((prev) => ({ ...prev, vaultError: true }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return live;
+}
+
 export default function Home() {
+  const live = useLiveNumbers();
   return (
     <>
       <Nav />
@@ -343,28 +429,47 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 03 · Real work — honest empty state */}
+        {/* 03 · Real work — live counts from the CFO's log */}
         <section className="section tight" id="work">
           <div className="wrap">
             <div className="rw-grid">
               <div>
                 <SectionLabel n="03">Real work</SectionLabel>
                 <h2 className="h2" style={{ marginTop: 18 }}>
-                  Real businesses. Real work. We're just getting started.
+                  Real businesses. Real work.{" "}
+                  {(live.done ?? 0) > 0 ? "The first job is done." : "We're just getting started."}
                 </h2>
                 <p className="lede" style={{ marginTop: 16, color: "var(--ink-2)", lineHeight: 1.6 }}>
-                  Ikenga hasn't finished a job yet — no customer story, no job
-                  counts to show you. The first real job will appear here,
-                  with its own page, its escrow and the CFO's decisions, once
-                  someone hires the team.
+                  {(live.done ?? 0) > 0 ? (
+                    <>
+                      The first real job is done — paid $1, delivered and
+                      accepted. Its page, its escrow and the CFO&apos;s
+                      decisions are all linked{" "}
+                      {live.firstDoneJobId ? (
+                        <a href={`/jobs/${live.firstDoneJobId}`}>here →</a>
+                      ) : (
+                        "below"
+                      )}
+                      .
+                    </>
+                  ) : (
+                    <>
+                      Ikenga hasn&apos;t finished a job yet — no customer story, no job
+                      counts to show you. The first real job will appear here,
+                      with its own page, its escrow and the CFO&apos;s decisions, once
+                      someone hires the team.
+                    </>
+                  )}
                 </p>
                 <div className="rw-stats">
-                  <div><b>0</b><span>jobs done</span></div>
-                  <div><b>0</b><span>businesses served</span></div>
-                  <div><b>0</b><span>payments settled on Celo</span></div>
+                  <div><b>{live.done ?? 0}</b><span>jobs done</span></div>
+                  <div><b>{live.customers ?? 0}</b><span>businesses served</span></div>
+                  <div><b>{live.settled ?? 0}</b><span>payments settled on Celo</span></div>
                 </div>
                 <div className="rw-cta">
-                  <a href="#hire" className="pill dark">Be the first job <span className="pill__ic">→</span></a>
+                  <a href="#hire" className="pill dark">
+                    {(live.done ?? 0) > 0 ? "Hire the team" : "Be the first job"} <span className="pill__ic">→</span>
+                  </a>
                   <a href="#money" className="pill green">See how the money moves <span className="pill__ic">→</span></a>
                 </div>
               </div>
@@ -376,15 +481,22 @@ export default function Home() {
                   <span className="btn">WhatsApp</span>
                   <div className="ph" />
                 </div>
-                <span className="rw-badge mono">First delivery preview — a drawing, not a real customer. Not yet.</span>
+                {(live.done ?? 0) > 0 && live.firstDoneJobId ? (
+                  <a className="rw-badge mono" href={`/jobs/${live.firstDoneJobId}`}>
+                    First delivery — a real job, paid $1 and accepted →
+                  </a>
+                ) : (
+                  <span className="rw-badge mono">First delivery preview — a drawing, not a real customer. Not yet.</span>
+                )}
               </div>
             </div>
             <p style={{ marginTop: 28, color: "var(--ink-2)", lineHeight: 1.6, maxWidth: 760 }}>
-              What's real today: the money side is built and checked. We
-              checked a live rate on Celo: $10 USDT comes out at about
-              <b>14,440 cNGN</b> — roughly ₦1,444 to the dollar. The CFO's
+              What&apos;s real today: the money side is live on Celo mainnet.
+              We checked a live rate on Celo: $10 USDT comes out at about
+              <b>14,440 cNGN</b> — roughly ₦1,444 to the dollar. The CFO&apos;s
               pricing, the money log, the Celo payments and the Self ID
-              check are all built and tested.
+              check are all built and tested, and the first real $1 job has
+              been paid, delivered and accepted.
             </p>
           </div>
         </section>
@@ -479,30 +591,87 @@ export default function Home() {
               <div className="vault">
                 <div className="vault__head mono">
                   <span>IkengaVault · Celo mainnet</span>
-                  <span>Not switched on yet</span>
+                  <span>
+                    {live.vault
+                      ? "Live on Celo mainnet"
+                      : live.vaultError
+                        ? "Could not load the vault"
+                        : "Checking the chain…"}
+                  </span>
                 </div>
                 <div className="vault__buckets">
-                  {BUCKETS.map((b) => (
-                    <div key={b.key} className="vault__bucket">
-                      <span className="vault__bar" style={{ background: b.color, width: "6%" }} />
-                      <span className="vault__label mono">{b.label}</span>
-                      <span className="vault__val mono">0.00 USDT</span>
-                    </div>
-                  ))}
+                  {BUCKETS.map((b) => {
+                    const atomic = live.vault ? live.vault[b.key as keyof typeof live.vault] : null;
+                    const max = live.vault
+                      ? Math.max(
+                          Number(live.vault.operating),
+                          Number(live.vault.tools),
+                          Number(live.vault.bond),
+                          Number(live.vault.reserve),
+                          1,
+                        )
+                      : 1;
+                    return (
+                      <div key={b.key} className="vault__bucket">
+                        <span
+                          className="vault__bar"
+                          style={{
+                            background: b.color,
+                            width: `${Math.max(6, atomic ? (Number(atomic) / max) * 100 : 6)}%`,
+                          }}
+                        />
+                        <span className="vault__label mono">{b.label}</span>
+                        <span className="vault__val mono">
+                          {atomic === null ? "—" : `${fmtUsd(atomic)} USDT`}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
                 <p className="vault__note">
-                  Every pot sits at 0.00 USDT until the first job settles — the
-                  vault holds nothing yet. The weekly tool budget is 30 USDT,
-                  and an agent is only paid after we've checked its Self ID.
+                  {live.vault && Number(live.vault.total) > 0 ? (
+                    <>
+                      The first $1 job has settled — the vault holds{" "}
+                      {fmtUsd(live.vault.total)} USDT in total,{" "}
+                      {fmtUsd(live.vault.operating)} USDT of it in operating.
+                      The weekly tool budget is 30 USDT, and an agent is only
+                      paid after we&apos;ve checked its Self ID.
+                    </>
+                  ) : live.vaultError ? (
+                    <>
+                      The vault could not be read from the chain right now —
+                      the numbers will be back once the chain answers. The
+                      weekly tool budget is 30 USDT, and an agent is only
+                      paid after we&apos;ve checked its Self ID.
+                    </>
+                  ) : (
+                    <>
+                      Every pot sits at 0.00 USDT until the first job settles
+                      — the vault holds nothing yet. The weekly tool budget is
+                      30 USDT, and an agent is only paid after we&apos;ve
+                      checked its Self ID.
+                    </>
+                  )}
                 </p>
               </div>
               <div className="cfo-log">
                 <span>
-                  Decision log · <b>0</b> made so far · <b>0</b> sent to the Boss ·{" "}
-                  <b>✓</b> log checks out
+                  Decision log · <b>{live.decisions ?? 0}</b> made so far ·{" "}
+                  <b>{live.onchainDecisions ?? 0}</b> on the chain ·{" "}
+                  {live.verifyOk === null ? (
+                    <>checking the log…</>
+                  ) : live.verifyOk ? (
+                    <>
+                      <b>✓</b> log checks out
+                    </>
+                  ) : (
+                    <>⚠ log does not check out</>
+                  )}
                 </span>
                 <span>
-                  Nothing here yet — the first decisions show up once a job runs.
+                  {(live.decisions ?? 0) > 0
+                    ? "The latest decisions are in the signed log."
+                    : "Nothing here yet — the first decisions show up once a job runs."}
                 </span>
                 <a href="/api/cfo">Read the CFO&rsquo;s rules →</a>
               </div>

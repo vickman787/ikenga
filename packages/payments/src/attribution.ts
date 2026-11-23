@@ -10,8 +10,12 @@
  *   semantics do not change.
  * - x402 settlements carry NO tag today: the facilitator submits the
  *   settlement tx, not Ikenga's wallet. Tag the agent's OWN transactions
- *   instead (ERC-8004 registration, Textile approval + swap, cNGN payout,
- *   escrow/vault calls) — that is what sendTagged() does.
+ *   (ERC-8004 registration, Textile approval + swap, cNGN payout,
+ *   escrow/vault calls) — that is what sendTagged() does — AND the
+ *   customer's own transactions in the hire flow (escrow deploy, approve,
+ *   fund, accept, reject), which the browser tags with appendAttribution()
+ *   in apps/web/src/lib/contracts.ts. The customer's payment only counts
+ *   as Ikenga work when it carries the tag.
  *
  * The tag itself comes from env IKENGA_ATTRIBUTION_TAG (see
  * resolveAttributionTag). Until the hackathon assigns a real code, every

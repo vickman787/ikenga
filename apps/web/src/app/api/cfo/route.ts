@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getLedger, ledgerBackend, listHires } from "@/lib/jobs";
+import { getLedger, ledgerBackend, listHires, summarizeHires } from "@/lib/jobs";
 
 /**
  * GET /api/cfo — the public, signed CFO decision log. Every decision is hash-chained; `verify.ok` says whether the
@@ -22,11 +22,13 @@ export async function GET() {
       });
     }
   }
+  const hires = await listHires();
   return NextResponse.json({
     mode: ledgerBackend() === "postgres" ? "live" : "demo",
     backend: ledgerBackend(),
     verify: { ok: allOk, ordersChecked: orders.length, entries: decisions.length },
-    jobs: (await listHires()).length,
+    jobs: hires.length,
+    summary: summarizeHires(hires),
     decisions,
     note: "Decisions are hash-chained (sha256). Signatures are not yet real — the CFO signing key is a Step 3 item.",
   });

@@ -7,7 +7,8 @@ import { getChainConfig } from "@/lib/jobs";
  * escrow it deploys matches the vault and token the server will check.
  *
  * { chainId, chainName, vaultAddress, tokenAddress, tokenSymbol,
- *   priceAtomic: "1000000", bondAtomic: "0", explorerUrl }
+ *   priceAtomic: "1000000", bondAtomic: "0", explorerUrl,
+ *   attributionTag: "celo_…" | null }
  */
 export async function GET() {
   try {

@@ -17,6 +17,8 @@ import {
   setHireStatus,
   setLedgerForTests,
   setReport,
+  summarizeHires,
+  type HireResult,
 } from "./jobs.js";
 
 describe("HireInputSchema", () => {
@@ -43,7 +45,7 @@ describe("HireInputSchema", () => {
 });
 
 describe("getChainConfig", () => {
-  const ENV_KEYS = ["IKENGA_CHAIN", "IKENGA_VAULT_ADDRESS", "IKENGA_TOKEN_ADDRESS"] as const;
+  const ENV_KEYS = ["IKENGA_CHAIN", "IKENGA_VAULT_ADDRESS", "IKENGA_TOKEN_ADDRESS", "IKENGA_ATTRIBUTION_TAG"] as const;
   const saved: Record<string, string | undefined> = {};
   const setEnv = (values: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>) => {
     for (const key of ENV_KEYS) {
@@ -60,7 +62,7 @@ describe("getChainConfig", () => {
   };
 
   it("defaults to Celo mainnet, from contracts/deployments/celo.json", () => {
-    setEnv({ IKENGA_CHAIN: undefined, IKENGA_VAULT_ADDRESS: undefined, IKENGA_TOKEN_ADDRESS: undefined });
+    setEnv({ IKENGA_CHAIN: undefined, IKENGA_VAULT_ADDRESS: undefined, IKENGA_TOKEN_ADDRESS: undefined, IKENGA_ATTRIBUTION_TAG: undefined });
     try {
       expect(getChainConfig()).toEqual({
         chainId: 42220,
@@ -71,7 +73,29 @@ describe("getChainConfig", () => {
         priceAtomic: "1000000",
         bondAtomic: "0",
         explorerUrl: "https://celoscan.io",
+        attributionTag: null,
       });
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("carries the attribution tag from env, and null when none is set", () => {
+    setEnv({ IKENGA_CHAIN: "mainnet", IKENGA_ATTRIBUTION_TAG: "celo_5144280c393f" });
+    try {
+      expect(getChainConfig().attributionTag).toBe("celo_5144280c393f");
+    } finally {
+      restoreEnv();
+    }
+    setEnv({ IKENGA_CHAIN: "mainnet", IKENGA_ATTRIBUTION_TAG: undefined });
+    try {
+      expect(getChainConfig().attributionTag).toBeNull();
+    } finally {
+      restoreEnv();
+    }
+    setEnv({ IKENGA_CHAIN: "mainnet", IKENGA_ATTRIBUTION_TAG: "not-a-tag" });
+    try {
+      expect(getChainConfig().attributionTag).toBeNull();
     } finally {
       restoreEnv();
     }
@@ -99,6 +123,7 @@ describe("getChainConfig", () => {
       IKENGA_CHAIN: "sepolia",
       IKENGA_VAULT_ADDRESS: "0x1A6d11A97e83f563bdA7811413097212362e0EcD",
       IKENGA_TOKEN_ADDRESS: "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+      IKENGA_ATTRIBUTION_TAG: undefined,
     });
     try {
       expect(getChainConfig()).toEqual({
@@ -110,6 +135,7 @@ describe("getChainConfig", () => {
         priceAtomic: "1000000",
         bondAtomic: "0",
         explorerUrl: "https://celo-sepolia.blockscout.com",
+        attributionTag: null,
       });
     } finally {
       restoreEnv();
@@ -302,5 +328,47 @@ describe("creative deliveries (website / flyers / promo video)", () => {
     expect(progress.slides).toHaveLength(1);
     expect(progress.html).toBe("");
     expect(progressToCreative(progress).slides?.[0].title).toBe("Real food");
+  });
+});
+
+describe("summarizeHires — the landing page's live numbers", () => {
+  const hire = (over: Partial<HireResult>): HireResult =>
+    ({
+      id: "ord_test",
+      jobType: "market-report",
+      description: "test",
+      customerWallet: "0x0000000000000000000000000000000000000001",
+      status: "in-progress",
+      priceUsdc: 1,
+      bondUsdc: 0,
+      cfoAccepted: true,
+      cfoReason: "",
+      decisionHash: "",
+      createdAt: "2026-11-23T11:00:00.000Z",
+      escrowAddress: null,
+      fundTxHash: null,
+      deliverableTxHash: null,
+      settleTxHash: null,
+      escrowState: null,
+      ...over,
+    }) as HireResult;
+
+  it("counts done and settled, and links the first finished job", () => {
+    const s = summarizeHires([
+      hire({ id: "ord_a", status: "accepted", createdAt: "2026-11-23T11:00:00.000Z" }),
+      hire({ id: "ord_b", status: "delivered", customerWallet: "0x0000000000000000000000000000000000000002", createdAt: "2026-11-23T12:00:00.000Z" }),
+      hire({ id: "ord_c", status: "in-progress" }),
+    ]);
+    expect(s).toEqual({ jobs: 3, done: 2, settled: 1, customers: 2, firstDoneJobId: "ord_a" });
+  });
+
+  it("is all zeros with no finished job", () => {
+    expect(summarizeHires([hire({ status: "in-progress" })])).toEqual({
+      jobs: 1,
+      done: 0,
+      settled: 0,
+      customers: 0,
+      firstDoneJobId: null,
+    });
   });
 });

@@ -261,10 +261,12 @@ export {
   escrowRpcUrl,
   readEscrowDeliverableHash,
   readEscrowOnchain,
+  readVaultOnchain,
   verifyTxReceipt,
   type EscrowOnchain,
   type EscrowReadOptions,
   type TxReceiptCheck,
+  type VaultOnchain,
 } from "./escrow.js";
 export {
   CELO_RPC_URL,

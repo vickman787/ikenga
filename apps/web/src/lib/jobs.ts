@@ -40,7 +40,8 @@ import celoDeploy from "../../../../contracts/deployments/celo.json";
 /** On-chain escrow checks, from @ikenga/payments (viem lives there —
 // the web app has no viem dependency of its own). The routes import
 // them from here. */
-export { readEscrowDeliverableHash, readEscrowOnchain, verifyTxReceipt } from "@ikenga/payments";
+export { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifyTxReceipt } from "@ikenga/payments";
+import { resolveAttributionTag as resolveTag } from "@ikenga/payments";
 export type { EscrowOnchain, TxReceiptCheck } from "@ikenga/payments";
 
 /** Plain-words label for what the team is doing right now, for any job type. */
@@ -99,6 +100,14 @@ export interface ChainConfig {
   /** The bond in atomic units — always "0" (see createHire). */
   bondAtomic: "0";
   explorerUrl: string;
+  /**
+   * The ERC-8021 attribution tag the browser sticks on the customer's own
+   * transactions (deploy, approve, fund, accept, reject) so the tracker
+   * counts the payment itself, not just the boss's seal. Public code, not
+   * a secret. Null when no tag is configured — the payment still goes
+   * through untagged rather than blocking the job.
+   */
+  attributionTag: string | null;
 }
 
 /**
@@ -131,6 +140,7 @@ export function getChainConfig(): ChainConfig {
       priceAtomic: "1000000",
       bondAtomic: "0",
       explorerUrl: "https://celo-sepolia.blockscout.com",
+      attributionTag: chainAttributionTag(),
     };
   }
   return {
@@ -142,7 +152,23 @@ export function getChainConfig(): ChainConfig {
     priceAtomic: "1000000",
     bondAtomic: "0",
     explorerUrl: "https://celoscan.io",
+    attributionTag: chainAttributionTag(),
   };
+}
+
+/**
+ * The attribution tag for /api/chain, or null when none is configured.
+ * Never throws — a missing tag must not break the chain config (and the
+ * hire flow with it); the browser then sends the payment untagged.
+ */
+function chainAttributionTag(): string | null {
+  const tag = process.env.IKENGA_ATTRIBUTION_TAG;
+  if (!tag) return null;
+  try {
+    return resolveTag(tag);
+  } catch {
+    return null;
+  }
 }
 
 let ledgerSingleton: Ledger | null = null;
@@ -229,6 +255,31 @@ function orderToHire(o: LedgerOrder): HireResult {
 export async function listHires(): Promise<HireResult[]> {
   const ledger = await getLedger();
   return (await ledger.listOrders()).map(orderToHire);
+}
+
+/**
+ * The landing page's real-work numbers, from the hires themselves.
+ * Done means delivered or accepted; settled means accepted (the $1 is
+ * in the vault). firstDoneJobId is the first finished job's page, so
+ * the landing can link to a real job instead of inventing one.
+ */
+export function summarizeHires(hires: HireResult[]): {
+  jobs: number;
+  done: number;
+  settled: number;
+  /** Distinct paying wallets among finished jobs. */
+  customers: number;
+  firstDoneJobId: string | null;
+} {
+  const done = hires.filter((h) => h.status === "delivered" || h.status === "accepted");
+  const firstDone = [...done].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  return {
+    jobs: hires.length,
+    done: done.length,
+    settled: hires.filter((h) => h.status === "accepted").length,
+    customers: new Set(done.map((h) => h.customerWallet.toLowerCase())).size,
+    firstDoneJobId: firstDone ? firstDone.id : null,
+  };
 }
 
 export async function getHire(id: string): Promise<HireResult | null> {

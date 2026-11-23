@@ -22,6 +22,8 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  encodeDeployData,
+  encodeFunctionData,
   getAddress,
   http,
   keccak256,
@@ -34,6 +36,7 @@ import {
   type WalletClient,
 } from "viem";
 import { celo, celoSepolia } from "viem/chains";
+import { appendAttribution, isAttributionTag } from "@ikenga/payments";
 
 export type { Address, Chain, Hex } from "viem";
 
@@ -52,6 +55,12 @@ export interface ChainConfig {
   priceAtomic: string;
   bondAtomic: string;
   explorerUrl: string;
+  /**
+   * The ERC-8021 attribution tag for this job's own transactions. Public
+   * code, not a secret. Null when the server has none configured — the
+   * payment still goes through untagged rather than blocking the job.
+   */
+  attributionTag: string | null;
 }
 
 export type EscrowState =
@@ -172,6 +181,48 @@ function publicClientFor(chainId: number): PublicClient {
 }
 
 /**
+ * Stick the attribution tag on the end of a transaction's calldata, so
+ * the tracker counts the customer's own payment — not just the boss's
+ * seal. The EVM ignores the trailing bytes, so the call itself does not
+ * change. When the server gave us no tag (or a bad one), the payment
+ * still goes through untagged: a missing tag must never block a job.
+ */
+export function tagCalldata(data: Hex, chain: ChainConfig): Hex {
+  const tag = chain.attributionTag;
+  if (!tag || !isAttributionTag(tag)) {
+    if (typeof console !== "undefined") {
+      console.warn(
+        "Ikenga: no attribution tag on this transaction — the payment will not be counted as Ikenga work.",
+      );
+    }
+    return data;
+  }
+  return appendAttribution(data, tag);
+}
+
+/**
+ * Send one tagged contract call from the customer's wallet and wait for
+ * it to be confirmed. `to` is omitted for a contract deployment.
+ */
+async function sendTaggedCall(args: {
+  wallet: WalletClient;
+  pub: PublicClient;
+  chain: ChainConfig;
+  to?: Address;
+  data: Hex;
+}): Promise<Hex> {
+  const { wallet, pub, chain, to, data } = args;
+  const txHash = await wallet.sendTransaction({
+    account: wallet.account!,
+    chain: chainForId(chain.chainId),
+    ...(to ? { to } : {}),
+    data: tagCalldata(data, chain),
+  });
+  await pub.waitForTransactionReceipt({ hash: txHash });
+  return txHash;
+}
+
+/**
  * Ask the browser wallet to connect and return the account the customer
  * picked. Throws a plain-words error when there is no wallet, or when the
  * customer says no.
@@ -237,14 +288,13 @@ export async function deployEscrow(args: {
   const wallet = walletClientFor(chain.chainId, account);
   const pub = publicClientFor(chain.chainId);
   const specHash = keccak256(toHex(description));
-  const txHash = await wallet.deployContract({
+  const data = encodeDeployData({
     abi: jobEscrowAbi,
     bytecode: JOB_ESCROW_BYTECODE,
     args: [account, chain.vaultAddress, chain.tokenAddress, BOND_ATOMIC, specHash],
-    account,
-    chain: chainForId(chain.chainId),
   });
-  const receipt = await pub.waitForTransactionReceipt({ hash: txHash });
+  const txHash = await sendTaggedCall({ wallet, pub, chain, data });
+  const receipt = await pub.getTransactionReceipt({ hash: txHash });
   if (!receipt.contractAddress) {
     throw new Error(
       "The escrow did not deploy. The network fee was spent — please try again.",
@@ -268,7 +318,6 @@ export async function approveAndFund(args: {
   const { account, chain, escrowAddress, onProgress } = args;
   const wallet = walletClientFor(chain.chainId, account);
   const pub = publicClientFor(chain.chainId);
-  const viemChain = chainForId(chain.chainId);
   const tokenAllowance = await pub.readContract({
     address: chain.tokenAddress,
     abi: erc20Abi,
@@ -278,26 +327,30 @@ export async function approveAndFund(args: {
   let approveTxHash: Hex | null = null;
   if (tokenAllowance < PRICE_ATOMIC) {
     onProgress?.("approving");
-    approveTxHash = await wallet.writeContract({
-      address: chain.tokenAddress,
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [escrowAddress, PRICE_ATOMIC],
-      account,
-      chain: viemChain,
+    approveTxHash = await sendTaggedCall({
+      wallet,
+      pub,
+      chain,
+      to: chain.tokenAddress,
+      data: encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [escrowAddress, PRICE_ATOMIC],
+      }),
     });
-    await pub.waitForTransactionReceipt({ hash: approveTxHash });
   }
   onProgress?.("funding");
-  const fundTxHash = await wallet.writeContract({
-    address: escrowAddress,
-    abi: jobEscrowAbi,
-    functionName: "fund",
-    args: [],
-    account,
-    chain: viemChain,
+  const fundTxHash = await sendTaggedCall({
+    wallet,
+    pub,
+    chain,
+    to: escrowAddress,
+    data: encodeFunctionData({
+      abi: jobEscrowAbi,
+      functionName: "fund",
+      args: [],
+    }),
   });
-  await pub.waitForTransactionReceipt({ hash: fundTxHash });
   return { approveTxHash, fundTxHash };
 }
 
@@ -313,15 +366,17 @@ export async function acceptJob(args: {
   const { account, chain, escrowAddress } = args;
   const wallet = walletClientFor(chain.chainId, account);
   const pub = publicClientFor(chain.chainId);
-  const txHash = await wallet.writeContract({
-    address: escrowAddress,
-    abi: jobEscrowAbi,
-    functionName: "accept",
-    args: [],
-    account,
-    chain: chainForId(chain.chainId),
+  const txHash = await sendTaggedCall({
+    wallet,
+    pub,
+    chain,
+    to: escrowAddress,
+    data: encodeFunctionData({
+      abi: jobEscrowAbi,
+      functionName: "accept",
+      args: [],
+    }),
   });
-  await pub.waitForTransactionReceipt({ hash: txHash });
   return { txHash };
 }
 
@@ -338,15 +393,17 @@ export async function rejectJob(args: {
   const { account, chain, escrowAddress } = args;
   const wallet = walletClientFor(chain.chainId, account);
   const pub = publicClientFor(chain.chainId);
-  const txHash = await wallet.writeContract({
-    address: escrowAddress,
-    abi: jobEscrowAbi,
-    functionName: "reject",
-    args: [],
-    account,
-    chain: chainForId(chain.chainId),
+  const txHash = await sendTaggedCall({
+    wallet,
+    pub,
+    chain,
+    to: escrowAddress,
+    data: encodeFunctionData({
+      abi: jobEscrowAbi,
+      functionName: "reject",
+      args: [],
+    }),
   });
-  await pub.waitForTransactionReceipt({ hash: txHash });
   return { txHash };
 }
 

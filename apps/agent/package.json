@@ -20,7 +20,8 @@
     "run:report": "tsc -p tsconfig.build.json && node dist/run-report.js",
     "test": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "exec:per-job-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-per-job-sepolia.js"
+    "exec:per-job-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-per-job-sepolia.js",
+    "exec:tagged-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-tagged-customer-sepolia.js"
   },
   "dependencies": {
     "@ikenga/ledger": "workspace:*",
