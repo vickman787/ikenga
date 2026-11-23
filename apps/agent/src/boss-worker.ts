@@ -18,6 +18,14 @@
  * POST /api/jobs/[id]/deliverable. It holds no database connection —
  * the site is the source of truth.
  *
+ * Each currency has its own vault — a USDT escrow registers and seals
+ * in the USDT vault, a cNGN escrow in the cNGN vault. The worker never
+ * assumes which: the escrow itself names its vault onchain
+ * (ikengaVault), and the worker reads that per escrow, checking the
+ * boss of that vault before acting. The vault in the config is only
+ * the chain guard — the site and the worker must agree on the chain's
+ * defaults before anything moves.
+ *
  * Run:  pnpm --filter @ikenga/agent boss
  * Env:  IKENGA_CHAIN (mainnet|sepolia, default mainnet)
  *       IKENGA_SITE_URL (default https://ikenga-two.vercel.app)
@@ -310,6 +318,45 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
   }
   log(`boss ${account.address} confirmed against the vault.`);
 
+  // Each currency has its own vault — USDT escrows register and seal in
+  // the USDT vault, cNGN escrows in the cNGN vault. The escrow itself
+  // names its vault (ikengaVault), so resolve it per escrow and check
+  // the boss of THAT vault before acting; the primary vault above is
+  // only the chain guard, proving the site and the worker agree on the
+  // chain's defaults. Boss checks are cached per vault within a run.
+  // The read uses this worker's RPC, so Sepolia runs read Sepolia.
+  const bossByVault = new Map<string, boolean>();
+  async function vaultForEscrow(escrow: Address, jobId: string): Promise<Address | null> {
+    let onchain;
+    try {
+      onchain = await readEscrowOnchain(escrow, { rpcUrl: config.rpcUrl });
+    } catch (err) {
+      log(`job ${jobId}: could not read escrow ${escrow} onchain — skipping. (${err instanceof Error ? err.message : "unknown error"})`);
+      return null;
+    }
+    if (!onchain.exists || !onchain.vault) {
+      log(`job ${jobId}: escrow ${escrow} is not on the chain, or names no vault — skipping.`);
+      return null;
+    }
+    const vault = onchain.vault as Address;
+    const key = vault.toLowerCase();
+    if (!bossByVault.has(key)) {
+      const boss = await publicClient.readContract({ address: vault, abi: VAULT_ABI, functionName: "boss" });
+      if (boss.toLowerCase() !== account.address.toLowerCase()) {
+        log(`job ${jobId}: the escrow's vault ${vault} has a different boss (${boss}) — refusing to act on this escrow.`);
+        bossByVault.set(key, false);
+        return null;
+      }
+      bossByVault.set(key, true);
+      if (vault.toLowerCase() !== config.vaultAddress.toLowerCase()) {
+        log(`boss ${account.address} confirmed against vault ${vault}.`);
+      }
+    } else if (!bossByVault.get(key)) {
+      return null;
+    }
+    return vault;
+  }
+
   const jobsRes = await fetchJson(`${config.siteUrl}/api/jobs`);
   if (jobsRes.status !== 200 || !Array.isArray(jobsRes.body.jobs)) {
     throw new Error(`Could not list jobs from ${config.siteUrl}/api/jobs (HTTP ${jobsRes.status}).`);
@@ -327,10 +374,12 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
     if (actions >= MAX_ACTIONS_PER_RUN) break;
     if (!job.escrowAddress || !REGISTERABLE_STATUSES.has(job.status)) continue;
     const escrow = job.escrowAddress as Address;
+    const vault = await vaultForEscrow(escrow, job.id);
+    if (!vault) continue;
     let known: boolean;
     try {
       known = await publicClient.readContract({
-        address: config.vaultAddress,
+        address: vault,
         abi: VAULT_ABI,
         functionName: "registeredEscrow",
         args: [escrow],
@@ -344,7 +393,7 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
     const { hash } = await sendTagged(
       walletClient,
       {
-        to: config.vaultAddress,
+        to: vault,
         data: encodeFunctionData({ abi: VAULT_ABI, functionName: "registerEscrow", args: [escrow] }),
       },
       { env },
@@ -368,13 +417,20 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
     const escrow = job.escrowAddress as Address;
     let onchain;
     try {
-      onchain = await readEscrowOnchain(escrow);
+      onchain = await readEscrowOnchain(escrow, { rpcUrl: config.rpcUrl });
     } catch (err) {
       log(`job ${job.id}: could not read escrow ${escrow} onchain — skipping. (${err instanceof Error ? err.message : "unknown error"})`);
       continue;
     }
     if (!onchain.exists || onchain.state !== 1) {
       log(`job ${job.id}: escrow is not FUNDED onchain (state ${onchain.state}) — skipping.`);
+      continue;
+    }
+    // The seal goes to the escrow's own vault — a cNGN escrow seals in
+    // the cNGN vault, never the USDT one.
+    const vault = onchain.vault as Address | null;
+    if (!vault) {
+      log(`job ${job.id}: escrow ${escrow} names no vault onchain — skipping.`);
       continue;
     }
     const detailRes = await fetchJson(`${config.siteUrl}/api/jobs/${job.id}`);
@@ -413,7 +469,7 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
     const { hash: txHash } = await sendTagged(
       walletClient,
       {
-        to: config.vaultAddress,
+        to: vault,
         data: encodeFunctionData({ abi: VAULT_ABI, functionName: "submitDeliverable", args: [escrow, hash] }),
       },
       { env },

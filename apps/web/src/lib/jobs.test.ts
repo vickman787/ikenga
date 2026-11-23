@@ -10,6 +10,7 @@ import {
   ESTIMATED_TOOL_COST_USDC,
   getChainConfig,
   getHire,
+  getLedger,
   getReport,
   HireInputSchema,
   listHires,
@@ -75,6 +76,14 @@ describe("getChainConfig", () => {
         explorerUrl: "https://celoscan.io",
         attributionTag: null,
         agentWallet: "0x61aD7AEAC0B94C91B4681d1D8624d82d5DaF4Fc0",
+        payTokens: ["USDT", "cNGN"],
+        tokens: {
+          USDT: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+          cNGN: "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f",
+        },
+        // The cNGN vault is not deployed yet (see DeployCngnVault.s.sol),
+        // so there is no cNGN vault in the config until it is.
+        vaults: { USDT: "0x1C2b2E64527B0bA7795ed3CDF7d76da51D24018B" },
       });
     } finally {
       restoreEnv();
@@ -138,6 +147,9 @@ describe("getChainConfig", () => {
         explorerUrl: "https://celo-sepolia.blockscout.com",
         attributionTag: null,
         agentWallet: "0x61aD7AEAC0B94C91B4681d1D8624d82d5DaF4Fc0",
+        payTokens: ["USDC"],
+        tokens: { USDC: "0x01C5C0122039549AD1493B8220cABEdD739BC44E" },
+        vaults: { USDC: "0x1A6d11A97e83f563bdA7811413097212362e0EcD" },
       });
     } finally {
       restoreEnv();
@@ -223,6 +235,126 @@ describe("createHire (Step 1 hire flow)", () => {
     const updated = await setHireStatus(hire.id, "delivered");
     expect(updated?.status).toBe("delivered");
     expect((await getHire(hire.id))?.status).toBe("delivered");
+  });
+});
+
+describe("createHire payment currency (USDT / cNGN)", () => {
+  const CNGN_VAULT = "0x00000000000000000000000000000000000000c1";
+  const CNGN_TOKEN = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f";
+  const WALLET = "0x0000000000000000000000000000000000000002";
+  const savedVault = process.env.IKENGA_CNGN_VAULT_ADDRESS;
+  const savedChain = process.env.IKENGA_CHAIN;
+  const savedSepoliaVault = process.env.IKENGA_VAULT_ADDRESS;
+  const savedSepoliaToken = process.env.IKENGA_TOKEN_ADDRESS;
+  const setMainnetCngn = () => {
+    process.env.IKENGA_CNGN_VAULT_ADDRESS = CNGN_VAULT;
+    delete process.env.IKENGA_CHAIN;
+  };
+  const restoreEnv = () => {
+    if (savedVault === undefined) delete process.env.IKENGA_CNGN_VAULT_ADDRESS;
+    else process.env.IKENGA_CNGN_VAULT_ADDRESS = savedVault;
+    if (savedChain === undefined) delete process.env.IKENGA_CHAIN;
+    else process.env.IKENGA_CHAIN = savedChain;
+    if (savedSepoliaVault === undefined) delete process.env.IKENGA_VAULT_ADDRESS;
+    else process.env.IKENGA_VAULT_ADDRESS = savedSepoliaVault;
+    if (savedSepoliaToken === undefined) delete process.env.IKENGA_TOKEN_ADDRESS;
+    else process.env.IKENGA_TOKEN_ADDRESS = savedSepoliaToken;
+    setLedgerForTests(new MemoryLedger());
+  };
+
+  it("defaults a hire to $1 USDT in the USDT vault", async () => {
+    setLedgerForTests(new MemoryLedger());
+    try {
+      const hire = await createHire({ jobType: "website", description: "A site", customerWallet: WALLET });
+      expect(hire.payCurrency).toBe("USDT");
+      expect(hire.priceAtomic).toBe("1000000");
+      expect(hire.priceRate).toBeNull();
+      expect(hire.tokenAddress).toBe("0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e");
+      expect(hire.vaultAddress).toBe("0x1C2b2E64527B0bA7795ed3CDF7d76da51D24018B");
+      expect(hire.priceUsdc).toBe(1);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("fixes a cNGN hire's price from the live rate, rounded up to whole naira", async () => {
+    setLedgerForTests(new MemoryLedger());
+    setMainnetCngn();
+    try {
+      const hire = await createHire(
+        { jobType: "flyers", description: "Flyers", customerWallet: WALLET, payCurrency: "cNGN" },
+        { previewCngnUsd: async () => "1444067000" },
+      );
+      expect(hire.payCurrency).toBe("cNGN");
+      expect(hire.priceAtomic).toBe("1445000000");
+      expect(hire.priceRate).toBe("1444.067");
+      expect(hire.tokenAddress).toBe(CNGN_TOKEN);
+      expect(hire.vaultAddress).toBe(CNGN_VAULT);
+      // The $1 value never changes — only the currency it is paid in.
+      expect(hire.priceUsdc).toBe(1);
+      // The decision names the currency, so the log says what was paid.
+      const decisions = await (await getLedger()).listDecisions(hire.id);
+      expect(decisions).toHaveLength(1);
+      expect(decisions[0]?.currency).toBe("cNGN");
+      expect(decisions[0]?.entryText).toMatch(/^quote\|cNGN\|/);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("a rate move after hire does not change the hired price", async () => {
+    setLedgerForTests(new MemoryLedger());
+    setMainnetCngn();
+    try {
+      const first = await createHire(
+        { jobType: "website", description: "A site", customerWallet: WALLET, payCurrency: "cNGN" },
+        { previewCngnUsd: async () => "1444067000" },
+      );
+      // The rate moves to 1,500 per $1 — a new hire fixes a new price,
+      // but the hired job keeps the price it was hired at.
+      const second = await createHire(
+        { jobType: "website", description: "A site", customerWallet: WALLET, payCurrency: "cNGN" },
+        { previewCngnUsd: async () => "1500000000" },
+      );
+      expect(first.priceAtomic).toBe("1445000000");
+      expect(second.priceAtomic).toBe("1500000000");
+      expect((await getHire(first.id))?.priceAtomic).toBe("1445000000");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("refuses cNGN when the cNGN vault is not deployed yet", async () => {
+    setLedgerForTests(new MemoryLedger());
+    delete process.env.IKENGA_CNGN_VAULT_ADDRESS;
+    delete process.env.IKENGA_CHAIN;
+    try {
+      await expect(
+        createHire(
+          { jobType: "website", description: "A site", customerWallet: WALLET, payCurrency: "cNGN" },
+          { previewCngnUsd: async () => "1444067000" },
+        ),
+      ).rejects.toThrow(/aren't switched on yet/);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("refuses cNGN on Sepolia — there is no cNGN there", async () => {
+    setLedgerForTests(new MemoryLedger());
+    process.env.IKENGA_CHAIN = "sepolia";
+    process.env.IKENGA_VAULT_ADDRESS = "0x1A6d11A97e83f563bdA7811413097212362e0EcD";
+    process.env.IKENGA_TOKEN_ADDRESS = "0x01C5C0122039549AD1493B8220cABEdD739BC44E";
+    try {
+      await expect(
+        createHire(
+          { jobType: "website", description: "A site", customerWallet: WALLET, payCurrency: "cNGN" },
+          { previewCngnUsd: async () => "1444067000" },
+        ),
+      ).rejects.toThrow(/isn't a way to pay/);
+    } finally {
+      restoreEnv();
+    }
   });
 });
 

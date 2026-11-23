@@ -8,7 +8,9 @@ import { getChainConfig } from "@/lib/jobs";
  *
  * { chainId, chainName, vaultAddress, tokenAddress, tokenSymbol,
  *   priceAtomic: "1000000", bondAtomic: "0", explorerUrl,
- *   attributionTag: "celo_…" | null }
+ *   attributionTag: "celo_…" | null, payTokens: ["USDT", "cNGN"],
+ *   tokens: { USDT, cNGN }, vaults: { USDT, cNGN? } }
+ * The cNGN vault is absent from `vaults` until it is deployed.
  */
 export async function GET() {
   try {

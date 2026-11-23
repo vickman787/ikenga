@@ -9,9 +9,13 @@ import {
   ensureChain,
   explorerTxUrl,
   fetchChainConfig,
+  jobPaymentFromRecord,
+  readTokenBalance,
   shortAddress,
   type Address,
   type ChainConfig,
+  type JobPayment,
+  type PayCurrency,
 } from "@/lib/contracts";
 
 interface HireResult {
@@ -21,9 +25,31 @@ interface HireResult {
   status: string;
   priceUsdc: number;
   bondUsdc: number;
+  /** The currency this job is paid in, and the exact price fixed at hire time. */
+  payCurrency: PayCurrency;
+  priceAtomic: string;
+  priceRate: string | null;
+  tokenAddress: string;
+  vaultAddress: string;
   cfoAccepted: boolean;
   cfoReason: string;
   decisionHash: string;
+}
+
+/** What the customer actually pays, in plain words: "$1" or "1,445 cNGN". */
+function priceLabel(payment: JobPayment): string {
+  if (payment.currency === "cNGN") {
+    return `${(payment.priceAtomic / 1_000_000n).toLocaleString("en-NG")} cNGN`;
+  }
+  return "$1";
+}
+
+/** A wallet balance in plain words, for the "you are short" message. */
+function balanceLabel(amount: bigint, currency: PayCurrency): string {
+  const whole = amount / 1_000_000n;
+  const frac = amount % 1_000_000n;
+  if (currency === "cNGN") return `${whole.toLocaleString("en-NG")} cNGN`;
+  return `$${whole}.${frac.toString().padStart(6, "0").slice(0, 2)}`;
 }
 
 /** One example brief per job type, so the customer knows what to write. */
@@ -35,22 +61,38 @@ const DESCRIPTION_PLACEHOLDERS: Record<JobType, string> = {
 };
 
 /**
- * The pay panel: $1 into the job's own escrow, from the customer's wallet.
- * Used here after a hire, and on the job page when a job is still waiting
- * to be paid for. Steps, in order: connect the wallet, set up the escrow,
- * approve $1, pay $1 in, save the payment. The work only starts once the
- * $1 is in escrow.
+ * The pay panel: the job's price into the job's own escrow, from the
+ * customer's wallet. Used here after a hire, and on the job page when a
+ * job is still waiting to be paid for. Steps, in order: connect the
+ * wallet, set up the escrow, approve the price, pay it in, save the
+ * payment. The work only starts once the price is in escrow.
+ *
+ * The payment comes from the job record — a cNGN job pays cNGN into
+ * the cNGN vault at the price fixed when it was hired; a USDT job pays
+ * $1 into the USDT vault. The panel checks the wallet holds enough
+ * before anything is deployed, so a short wallet never wastes gas.
  */
 export function PayPanel({
   jobId,
   description,
   customerWallet,
+  payCurrency,
+  priceAtomic,
+  priceRate,
+  tokenAddress,
+  vaultAddress,
   account: initialAccount,
   onPaid,
 }: {
   jobId: string;
   description: string;
   customerWallet: string;
+  payCurrency?: PayCurrency;
+  priceAtomic?: string;
+  /** The cNGN-per-$1 rate the price was fixed at (cNGN jobs only). */
+  priceRate?: string | null;
+  tokenAddress?: string;
+  vaultAddress?: string;
   account: Address | null;
   onPaid?: () => void;
 }) {
@@ -69,6 +111,19 @@ export function PayPanel({
   useEffect(() => {
     setAccount(initialAccount);
   }, [initialAccount]);
+
+  // The chain config tells the panel which token and vault this job's
+  // currency lives in; the price itself comes from the job record.
+  useEffect(() => {
+    fetchChainConfig()
+      .then(setChain)
+      .catch(() => setChain(null));
+  }, []);
+
+  const payment: JobPayment | null = chain
+    ? jobPaymentFromRecord({ payCurrency, priceAtomic, tokenAddress, vaultAddress }, chain)
+    : null;
+  const amount = payment ? priceLabel(payment) : "$1";
 
   async function connect() {
     setError(null);
@@ -92,9 +147,21 @@ export function PayPanel({
           `That wallet (${shortAddress(acct)}) is not the wallet that ordered this job (${shortAddress(customerWallet)}). Connect the wallet that ordered it.`,
         );
       }
-      const cfg = await fetchChainConfig();
+      const cfg = chain ?? (await fetchChainConfig());
       setChain(cfg);
       await ensureChain(cfg.chainId);
+      const payWith = jobPaymentFromRecord(
+        { payCurrency, priceAtomic, tokenAddress, vaultAddress },
+        cfg,
+      );
+      // Check the wallet holds enough before deploying anything — a
+      // short wallet would waste the deploy fee and still not pay.
+      const balance = await readTokenBalance(cfg, acct, payWith.token);
+      if (balance < payWith.priceAtomic) {
+        throw new Error(
+          `That wallet holds ${balanceLabel(balance, payWith.currency)} — this job costs ${priceLabel(payWith)}. Top it up first.`,
+        );
+      }
 
       // Reuse an escrow this panel already deployed, so a retry after a
       // failed save does not set up a second one.
@@ -102,7 +169,7 @@ export function PayPanel({
       let deployHash = deployTxHash;
       if (!esc) {
         setProgress("Setting up your escrow…");
-        const deployed = await deployEscrow({ account: acct, chain: cfg, description });
+        const deployed = await deployEscrow({ account: acct, chain: cfg, payment: payWith, description });
         esc = deployed.escrowAddress;
         deployHash = deployed.txHash;
         setEscrowAddress(esc);
@@ -125,10 +192,11 @@ export function PayPanel({
       const { fundTxHash: fundHash } = await approveAndFund({
         account: acct,
         chain: cfg,
+        payment: payWith,
         escrowAddress: esc,
         onProgress: (s) =>
           setProgress(
-            s === "approving" ? "Asking for $1 approval…" : "Paying $1 into escrow…",
+            s === "approving" ? `Asking for ${amount} approval…` : `Paying ${amount} into escrow…`,
           ),
       });
       setFundTxHash(fundHash);
@@ -142,7 +210,7 @@ export function PayPanel({
       if (!fundRes.ok) {
         throw new Error(
           fundData.error ??
-            "Your $1 is in escrow, but we could not save the payment. Tell us and we will sort it out.",
+            `Your ${amount} is in escrow, but we could not save the payment. Tell us and we will sort it out.`,
         );
       }
       setProgress(null);
@@ -173,10 +241,10 @@ export function PayPanel({
         }}
       >
         <p style={{ fontWeight: 700, color: "var(--accent-ink)" }}>
-          Paid — your $1 is in escrow.
+          Paid — your {amount} is in escrow.
         </p>
         <p style={{ marginTop: 6, color: "var(--ink-2)" }}>
-          The team can start now. If you turn the work down, the $1 comes
+          The team can start now. If you turn the work down, the {amount} comes
           back to your wallet.
         </p>
         {fundTxHash && chain && (
@@ -188,7 +256,7 @@ export function PayPanel({
               className="mono"
               style={{ fontSize: 12, wordBreak: "break-all" }}
             >
-              See the $1 payment on the chain →
+              See the {amount} payment on the chain →
             </a>
           </p>
         )}
@@ -211,19 +279,25 @@ export function PayPanel({
         fontSize: 14.5,
       }}
     >
-      <p style={{ fontWeight: 700 }}>Pay $1 into escrow</p>
+      <p style={{ fontWeight: 700 }}>Pay {amount} into escrow</p>
       <p style={{ marginTop: 6, color: "var(--ink-2)", lineHeight: 1.6 }}>
-        Your $1 sits in escrow until you accept the work. If you turn it
+        Your {amount} sits in escrow until you accept the work. If you turn it
         down, it comes back to your wallet. You also pay the network fee in
         CELO — about 0.35 CELO in total for setting this up.
       </p>
+      {payment?.currency === "cNGN" && priceRate && (
+        <p style={{ marginTop: 6, color: "var(--ink-2)", lineHeight: 1.6 }}>
+          Fixed at {priceRate} cNGN per $1 when you hired the job — the rate
+          moving since then does not change what you pay.
+        </p>
+      )}
       {!account ? (
         <button onClick={connect} className="btn leaf lg block" style={{ marginTop: 14 }} type="button">
           Connect your Celo wallet
         </button>
       ) : (
-        <button onClick={pay} disabled={busy} className="btn leaf lg block" style={{ marginTop: 14 }} type="button">
-          {busy ? (progress ?? "Working…") : "Pay $1 into escrow"}
+        <button onClick={pay} disabled={busy || !payment} className="btn leaf lg block" style={{ marginTop: 14 }} type="button">
+          {busy ? (progress ?? "Working…") : !payment ? "Loading the price…" : `Pay ${amount} into escrow`}
         </button>
       )}
       {account && (
@@ -253,7 +327,7 @@ export function PayPanel({
             className="mono"
             style={{ fontSize: 12, wordBreak: "break-all" }}
           >
-            $1 paid — see it on the chain →
+            {amount} paid — see it on the chain →
           </a>
         </p>
       )}
@@ -270,6 +344,61 @@ export default function HireForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<HireResult | null>(null);
+  const [chain, setChain] = useState<ChainConfig | null>(null);
+  const [currency, setCurrency] = useState<PayCurrency>("USDT");
+  const [quote, setQuote] = useState<{ priceDisplay: string; rate: string } | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+
+  // Which currencies this chain offers, and whether cNGN is actually
+  // switched on (its vault has to be deployed first).
+  useEffect(() => {
+    fetchChainConfig()
+      .then((cfg) => {
+        setChain(cfg);
+        if (!cfg.payTokens.includes(currency)) setCurrency(cfg.payTokens[0] ?? "USDT");
+      })
+      .catch(() => setChain(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The cNGN amount moves with the rate — show the live one, and refresh
+  // it while the customer is choosing. The hire itself fixes the price
+  // on the server, so this is indicative only.
+  useEffect(() => {
+    if (currency !== "cNGN") {
+      setQuote(null);
+      setQuoteError(null);
+      return;
+    }
+    let live = true;
+    const load = () =>
+      fetch("/api/quote?currency=cNGN")
+        .then((r) => r.json())
+        .then((d) => {
+          if (!live) return;
+          if (d.error) {
+            setQuote(null);
+            setQuoteError(d.error as string);
+          } else {
+            setQuote({ priceDisplay: d.priceDisplay as string, rate: d.rate as string });
+            setQuoteError(null);
+          }
+        })
+        .catch(() => {
+          if (live) {
+            setQuote(null);
+            setQuoteError("Could not read the naira rate right now.");
+          }
+        });
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [currency]);
+
+  const cngnReady = chain?.payTokens.includes("cNGN") && Boolean(chain?.vaults.cNGN);
 
   // Service cards and the hero menu on the home page pick the job type
   // here, so "Order" lands on the hire form with the right job selected.
@@ -303,7 +432,7 @@ export default function HireForm() {
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobType, description, customerWallet: account }),
+        body: JSON.stringify({ jobType, description, customerWallet: account, payCurrency: currency }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not create the job");
@@ -344,6 +473,56 @@ export default function HireForm() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div>
+          <label className="field">
+            How do you want to pay?
+            <span className="hint">Every job is $1 — in USDT, or in naira (cNGN) at the live rate.</span>
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+            {(chain?.payTokens ?? ["USDT"]).map((t) => {
+              const isCngn = t === "cNGN";
+              const disabled = isCngn && !cngnReady;
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setCurrency(t)}
+                  className={`job-pick ${currency === t ? "on" : ""}`}
+                  style={disabled ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
+                >
+                  {t === "USDC" ? "Test USDC" : t}{" "}
+                  <span className="price">
+                    ·{" "}
+                    {isCngn
+                      ? quote
+                        ? `about ${quote.priceDisplay}`
+                        : quoteError
+                          ? "rate not loading"
+                          : "loading the rate…"
+                      : "$1"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {currency === "cNGN" && quote && (
+            <p style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+              About {quote.rate} cNGN per $1 right now. The exact amount is
+              fixed when you hire — the rate moving after that does not
+              change what you pay.
+            </p>
+          )}
+          {currency === "cNGN" && quoteError && (
+            <p style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>{quoteError} Pay in USDT for now.</p>
+          )}
+          {chain?.payTokens.includes("cNGN") && !cngnReady && (
+            <p style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+              Paying in naira is not switched on yet — pay in USDT for now.
+            </p>
+          )}
         </div>
 
         <div>
@@ -413,7 +592,11 @@ export default function HireForm() {
             Job created — {result.id}
           </p>
           <p style={{ marginTop: 6 }}>
-            {JOB_LABELS[result.jobType]} · ${result.priceUsdc}
+            {JOB_LABELS[result.jobType]} ·{" "}
+            {result.payCurrency === "cNGN"
+              ? `${(BigInt(result.priceAtomic) / 1_000_000n).toLocaleString("en-NG")} cNGN`
+              : `$${result.priceUsdc}`}
+            {result.payCurrency === "cNGN" && result.priceRate ? ` (fixed at ${result.priceRate} cNGN per $1)` : ""}
           </p>
           <p style={{ marginTop: 6, color: "var(--ink-2)" }}>{result.cfoReason}</p>
           <p className="mono" style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", wordBreak: "break-all" }}>
@@ -423,6 +606,11 @@ export default function HireForm() {
             jobId={result.id}
             description={result.description}
             customerWallet={account ?? ""}
+            payCurrency={result.payCurrency}
+            priceAtomic={result.priceAtomic}
+            priceRate={result.priceRate}
+            tokenAddress={result.tokenAddress}
+            vaultAddress={result.vaultAddress}
             account={account}
           />
         </div>

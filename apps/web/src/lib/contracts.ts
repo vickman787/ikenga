@@ -12,7 +12,7 @@
  * Each job gets its OWN JobEscrow, deployed from the customer's browser.
  * The escrow's bond is always 0: the vault's BOND bucket holds no USDT, and
  * JobEscrow.reject() with a bond above 0 and no locked bond reverts — so a
- * bond would make the $1 refund impossible. The refund is $1 only.
+ * bond would make the refund impossible. The refund is the job's price only.
  *
  * A job is $1, paid in USDT or in cNGN — the customer's choice, fixed on
  * the job record at hire time. USDT is 1_000_000 atomic units; cNGN is
@@ -69,6 +69,30 @@ export interface JobPayment {
   token: Address;
   vault: Address;
   priceAtomic: bigint;
+}
+
+/**
+ * Build a job's payment from its stored record. The token, vault and
+ * price travel with the job — never from a global — so a cNGN job pays
+ * cNGN into the cNGN vault at the price fixed when it was hired. Jobs
+ * hired before currencies existed have no payment fields; they fall
+ * back to the chain's default currency (USDT on mainnet, test USDC on
+ * Sepolia) so they can still be paid.
+ */
+export function jobPaymentFromRecord(
+  job: {
+    payCurrency?: PayCurrency;
+    priceAtomic?: string;
+    tokenAddress?: string;
+    vaultAddress?: string;
+  },
+  chain: ChainConfig,
+): JobPayment {
+  const currency = job.payCurrency ?? chain.tokenSymbol;
+  const token = (job.tokenAddress || chain.tokens[currency] || chain.tokenAddress) as Address;
+  const vault = (job.vaultAddress || chain.vaults[currency] || chain.vaultAddress) as Address;
+  const priceAtomic = job.priceAtomic ? BigInt(job.priceAtomic) : BigInt(chain.priceAtomic);
+  return { currency, token, vault, priceAtomic };
 }
 
 /** What GET /api/chain answers. Never hardcode these values client-side. */

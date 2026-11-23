@@ -29,6 +29,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     );
   }
   const config = getChainConfig();
+  // The escrow must hold the full price fixed when the job was hired —
+  // $1 for a USDT job, the fixed cNGN amount for a cNGN job.
+  const jobPrice = BigInt(hire.priceAtomic);
+  const jobPriceLabel = hire.payCurrency === "cNGN" ? `${hire.priceAtomic} atomic cNGN` : "$1";
   let receipt;
   try {
     receipt = await verifyTxReceipt(body.txHash as `0x${string}`);
@@ -59,13 +63,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   if (onchain.state !== 1) {
     return NextResponse.json(
-      { error: "The $1 hasn't landed in the escrow yet — the payment may still be on its way." },
+      { error: `The ${jobPriceLabel} hasn't landed in the escrow yet — the payment may still be on its way.` },
       { status: 400 },
     );
   }
-  if (onchain.tokenBalance === null || onchain.tokenBalance < BigInt(config.priceAtomic)) {
+  if (onchain.tokenBalance === null || onchain.tokenBalance < jobPrice) {
     return NextResponse.json(
-      { error: "The escrow holds less than $1 — the full $1 has to be in before the team starts." },
+      { error: `The escrow holds less than ${jobPriceLabel} — the full ${jobPriceLabel} has to be in before the team starts.` },
       { status: 400 },
     );
   }
@@ -76,11 +80,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     id: `dec_${id}_fund_${Date.now()}`,
     orderId: id,
     kind: "escrow",
-    reason: "Customer paid $1 into escrow.",
+    reason: `Customer paid ${jobPriceLabel} into escrow.`,
     amountMicroUsdc: hire.priceUsdc * 1_000_000,
+    currency: hire.payCurrency,
     signature: "0xikenga-step2",
     txHash: body.txHash,
-    entry: `escrow|Customer paid $1 into escrow.|${hire.priceUsdc * 1_000_000}`,
+    entry: `escrow|${hire.payCurrency}|Customer paid ${jobPriceLabel} into escrow.|${hire.priceAtomic}`,
   });
   return NextResponse.json({ job: await getHire(id) });
 }

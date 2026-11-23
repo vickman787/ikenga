@@ -17,6 +17,8 @@ import "../src/JobEscrow.sol";
 ///   IKENGA_BOSS       Boss wallet (default: deployer)
 ///   IKENGA_CUSTOMER   escrow customer (default: deployer - Sepolia testing)
 ///   IKENGA_BOND       bond in atomic units (default: 200000 = 0.20 USDT)
+///   IKENGA_PRICE      escrow price in atomic units (default: 1000000 = $1.
+///                     A cNGN job passes the cNGN amount fixed at hire time.)
 ///   IKENGA_SPEC_HASH  bytes32 hex spec hash (default: 0x0)
 /// Record the printed addresses in deployments/celo.json (or
 /// deployments/celo-sepolia.json for Sepolia).
@@ -26,6 +28,7 @@ contract Deploy is Script {
         address boss = vm.envOr("IKENGA_BOSS", msg.sender);
         address customer = vm.envOr("IKENGA_CUSTOMER", msg.sender);
         uint256 bond = vm.envOr("IKENGA_BOND", uint256(200_000));
+        uint256 price = vm.envOr("IKENGA_PRICE", uint256(1_000_000));
         bytes32 specHash = vm.envOr("IKENGA_SPEC_HASH", bytes32(0));
 
         vm.startBroadcast();
@@ -33,10 +36,11 @@ contract Deploy is Script {
         IkengaVault vault = new IkengaVault(boss, token);
         console.log("IkengaVault deployed:", address(vault));
 
-        JobEscrow escrow = new JobEscrow(customer, address(vault), token, bond, specHash);
+        JobEscrow escrow = new JobEscrow(customer, address(vault), token, bond, price, specHash);
         console.log("JobEscrow deployed:", address(escrow));
         console.log("  customer:", customer);
         console.log("  bond (atomic USDT):", bond);
+        console.log("  price (atomic):", price);
 
         vault.registerEscrow(address(escrow));
         console.log("Escrow registered in vault");

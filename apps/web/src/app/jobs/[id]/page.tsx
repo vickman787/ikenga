@@ -55,6 +55,14 @@ interface JobDetail {
     deliverableTxHash?: string | null;
     settleTxHash?: string | null;
     escrowState?: "unfunded" | "funded" | "accepted" | "rejected" | "released" | null;
+    // Added by the cNGN work: which currency the job is paid in, and the
+    // exact price fixed at hire time. Old jobs have none of these — they
+    // default to $1 USDT on the panel.
+    payCurrency?: "USDT" | "USDC" | "cNGN";
+    priceAtomic?: string;
+    priceRate?: string | null;
+    tokenAddress?: string;
+    vaultAddress?: string;
   };
   report: {
     report: string;
@@ -357,6 +365,13 @@ export default function JobPage() {
     }
   }
 
+  // What the customer paid, in plain words — "$1", or the fixed cNGN
+  // amount for a cNGN job. Old jobs have no payment fields: $1 USDT.
+  const amountLabel =
+    data?.job.payCurrency === "cNGN" && data.job.priceAtomic
+      ? `${(BigInt(data.job.priceAtomic) / 1_000_000n).toLocaleString("en-NG")} cNGN`
+      : "$1";
+
   return (
     <main className="wrap" style={{ paddingTop: 48, paddingBottom: 96, maxWidth: 820 }}>
       <a href="/#hire" style={{ fontSize: 14, color: "var(--muted)" }}>← Back to Ikenga</a>
@@ -383,17 +398,25 @@ export default function JobPage() {
             {data.job.description}
           </p>
           <div className="card pad" style={{ marginTop: 24, display: "grid", gap: 12 }}>
-            <p><b>Price:</b> ${data.job.priceUsdc}</p>
+            <p>
+              <b>Price:</b>{" "}
+              {data.job.payCurrency === "cNGN" && data.job.priceAtomic
+                ? `${(BigInt(data.job.priceAtomic) / 1_000_000n).toLocaleString("en-NG")} cNGN`
+                : `$${data.job.priceUsdc}`}
+              {data.job.payCurrency === "cNGN" && data.job.priceRate
+                ? ` (fixed at ${data.job.priceRate} cNGN per $1)`
+                : ""}
+            </p>
             <p><b>Paying wallet:</b> <span className="mono" style={{ fontSize: 13, wordBreak: "break-all" }}>{data.job.customerWallet}</span></p>
             {data.job.escrowAddress ? (
               <p>
-                <b>Your $1:</b> {data.job.escrowState === "accepted"
+                <b>Your {amountLabel}:</b> {data.job.escrowState === "accepted"
                   ? "paid to Ikenga — you accepted the work"
                   : data.job.escrowState === "rejected"
                     ? "refunded — you turned the work down"
                     : data.job.escrowState === "funded"
                       ? "in escrow"
-                      : "escrow set up, waiting for your $1"}{" "}
+                      : "escrow set up, waiting for your payment"}{" "}
                 {chain && (
                   <a
                     href={explorerAddressUrl(chain, data.job.escrowAddress)}
@@ -407,11 +430,11 @@ export default function JobPage() {
                 )}
               </p>
             ) : (
-              <p><b>Your $1:</b> not paid yet — pay below and the team can start.</p>
+              <p><b>Your {amountLabel}:</b> not paid yet — pay below and the team can start.</p>
             )}
             {data.job.fundTxHash && chain && (
               <p>
-                <b>$1 payment:</b>{" "}
+                <b>{amountLabel} payment:</b>{" "}
                 <a
                   href={explorerTxUrl(chain, data.job.fundTxHash)}
                   target="_blank"
@@ -457,6 +480,11 @@ export default function JobPage() {
                     jobId={data.job.id}
                     description={data.job.description}
                     customerWallet={data.job.customerWallet}
+                    payCurrency={data.job.payCurrency}
+                    priceAtomic={data.job.priceAtomic}
+                    priceRate={data.job.priceRate}
+                    tokenAddress={data.job.tokenAddress}
+                    vaultAddress={data.job.vaultAddress}
                     account={account}
                     onPaid={() => reload().catch(() => {})}
                   />
@@ -469,7 +497,7 @@ export default function JobPage() {
                   </>
                 )}
                 <p style={{ marginTop: 12, fontSize: 13, color: "var(--muted)" }}>
-                  {COST_BLURB[data.job.jobType]} Your $1 is held in escrow
+                  {COST_BLURB[data.job.jobType]} Your {amountLabel} is held in escrow
                   until you accept the work — turn it down and it comes
                   back to your wallet.
                 </p>
@@ -660,12 +688,12 @@ export default function JobPage() {
           </div>
           <p className="note" style={{ marginTop: 24 }}>
             {data.job.status === "draft"
-              ? "Your $1 is not paid yet. Pay it into escrow above and the team can start."
+              ? `Your ${amountLabel} is not paid yet. Pay it into escrow above and the team can start.`
               : data.job.escrowState === "accepted"
-                ? "Settled: you accepted the work and the $1 in escrow went to Ikenga."
+                ? `Settled: you accepted the work and the ${amountLabel} in escrow went to Ikenga.`
                 : data.job.escrowState === "rejected"
-                  ? "Settled: you turned the work down and the $1 went back to your wallet."
-                  : "Your $1 is held in escrow until you accept the work — turn it down and it comes back to your wallet."}
+                  ? `Settled: you turned the work down and the ${amountLabel} went back to your wallet.`
+                  : `Your ${amountLabel} is held in escrow until you accept the work — turn it down and it comes back to your wallet.`}
           </p>
         </>
       )}

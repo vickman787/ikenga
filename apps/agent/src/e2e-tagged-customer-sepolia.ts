@@ -62,10 +62,11 @@ function pass(step: string, detail: string): void {
 }
 
 const escrowAbi = parseAbi([
-  "constructor(address customer, address vault, address token, uint256 bondAmount, bytes32 specHash)",
+  "constructor(address customer, address vault, address token, uint256 bondAmount, uint256 price, bytes32 specHash)",
   "function fund()",
   "function accept()",
   "function state() view returns (uint8)",
+  "function price() view returns (uint256)",
   "function deliverableHash() view returns (bytes32)",
 ]);
 
@@ -136,13 +137,15 @@ async function main(): Promise<void> {
   const deployData = encodeDeployData({
     abi: escrowAbi,
     bytecode,
-    args: [customer, vault, token, 0n, specHash],
+    args: [customer, vault, token, 0n, PRICE, specHash],
   });
   const deployTx = await sendTagged("deploy", undefined, deployData);
   const deployReceipt = await pub.waitForTransactionReceipt({ hash: deployTx });
   const escrow = deployReceipt.contractAddress;
   if (!escrow) fail("deploy", "no contract address in receipt");
-  pass("deploy", `escrow ${escrow}`);
+  const onchainPrice = await pub.readContract({ address: escrow, abi: escrowAbi, functionName: "price" });
+  if (onchainPrice !== PRICE) fail("deploy", `price()=${onchainPrice}, expected ${PRICE}`);
+  pass("deploy", `escrow ${escrow}, price ${PRICE}`);
 
   // 2. Approve + fund — tagged.
   await sendTagged(

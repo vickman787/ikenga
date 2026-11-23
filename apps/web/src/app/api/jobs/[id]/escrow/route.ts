@@ -31,6 +31,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     );
   }
   const config = getChainConfig();
+  // The escrow must match THIS job's payment — its token, its vault,
+  // and the price fixed at hire time — not just the chain defaults. A
+  // cNGN job's escrow holds cNGN in the cNGN vault at the fixed cNGN
+  // price; a USDT job's holds USDT in the USDT vault at $1. Old jobs
+  // (hired before currencies existed) fall back to the defaults.
+  const jobToken = hire.tokenAddress || config.tokenAddress;
+  const jobVault = hire.vaultAddress || config.vaultAddress;
+  const jobPrice = BigInt(hire.priceAtomic);
   let onchain;
   try {
     onchain = await readEscrowOnchain(body.escrowAddress as `0x${string}`);
@@ -54,15 +62,25 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       { status: 400 },
     );
   }
-  if (onchain.vault?.toLowerCase() !== config.vaultAddress.toLowerCase()) {
+  if (onchain.vault?.toLowerCase() !== jobVault.toLowerCase()) {
     return NextResponse.json(
       { error: "That escrow points at a different vault — it has to use Ikenga's vault." },
       { status: 400 },
     );
   }
-  if (onchain.token?.toLowerCase() !== config.tokenAddress.toLowerCase()) {
+  if (onchain.token?.toLowerCase() !== jobToken.toLowerCase()) {
     return NextResponse.json(
-      { error: `That escrow uses a different token — it has to use ${config.tokenSymbol}.` },
+      { error: `That escrow uses a different token — it has to use ${hire.payCurrency}.` },
+      { status: 400 },
+    );
+  }
+  // New escrows report their price onchain; it must be exactly the
+  // price fixed when the job was hired. Escrows deployed before the
+  // cNGN change have no price() and report null — their price is the
+  // old $1 constant, checked by the balance in the fund step instead.
+  if (onchain.price != null && onchain.price !== jobPrice) {
+    return NextResponse.json(
+      { error: `That escrow holds a different price — this job costs ${hire.priceAtomic} atomic ${hire.payCurrency}.` },
       { status: 400 },
     );
   }
@@ -80,9 +98,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     kind: "escrow",
     reason: "Escrow deployed for this job.",
     amountMicroUsdc: hire.priceUsdc * 1_000_000,
+    currency: hire.payCurrency,
     signature: "0xikenga-step2",
     txHash: body.txHash,
-    entry: `escrow|Escrow deployed.|${hire.priceUsdc * 1_000_000}`,
+    entry: `escrow|${hire.payCurrency}|Escrow deployed.|${hire.priceAtomic}`,
   });
   return NextResponse.json({ job: await getHire(id) });
 }

@@ -3,12 +3,17 @@ pragma solidity ^0.8.24;
 
 /// @title JobEscrow - fixed-price escrow for one $1 job.
 /// @notice Step 2 real logic. NOT audited, NOT deployed.
-/// Customer pays exactly 1 USDT (PRICE = 1_000_000, 6 decimals) into escrow.
-/// accept() releases PRICE to the IkengaVault; reject() refunds PRICE plus
-/// the CFO bond locked in the vault; 48h of silence lets anyone trigger
-/// deadlineRelease(), which releases PRICE to the vault.
+/// Customer pays exactly the escrow's price into escrow: 1 USDT
+/// (1_000_000, 6 decimals) for a USDT job, or the cNGN amount fixed at
+/// hire time for a cNGN job (about 1,445 cNGN at the live rate). The
+/// price is set once, in the constructor, and can never change — the
+/// customer always pays exactly what the job quoted. accept() releases
+/// the price to the IkengaVault; reject() refunds the price plus the CFO
+/// bond locked in the vault; 48h of silence lets anyone trigger
+/// deadlineRelease(), which releases the price to the vault.
 /// The token address is passed in the constructor - never hardcoded - so
-/// Sepolia can use a test token instead of the Celo mainnet USDT address.
+/// Sepolia can use a test token instead of the Celo mainnet USDT address,
+/// and a cNGN job can use the Celo mainnet cNGN address.
 /// The naira leg converts USDT<->cNGN on Textile FX off-contract.
 interface IERC20MinimalEscrow {
     function transfer(address to, uint256 amount) external returns (bool);
@@ -27,7 +32,10 @@ contract JobEscrow {
     address public customer;
     address public immutable ikengaVault;
     address public immutable token;
-    uint256 public constant PRICE = 1_000_000; // 1 USDT, 6 decimals
+    /// @notice This escrow's price, in the token's atomic units (6
+    /// decimals), fixed at deploy and never changeable: 1_000_000 for a
+    /// $1 USDT job, the cNGN amount fixed at hire time for a cNGN job.
+    uint256 public immutable price;
     uint256 public constant DEADLINE = 48 hours;
     uint256 public immutable bondAmount;
     bytes32 public immutable specHash;
@@ -56,20 +64,23 @@ contract JobEscrow {
         address _vault,
         address _token,
         uint256 _bondAmount,
+        uint256 _price,
         bytes32 _specHash
     ) {
         require(_customer != address(0), "JobEscrow: customer is zero");
         require(_vault != address(0), "JobEscrow: vault is zero");
         require(_token != address(0), "JobEscrow: token is zero");
+        require(_price > 0, "JobEscrow: price is zero");
         customer = _customer;
         ikengaVault = _vault;
         token = _token;
         bondAmount = _bondAmount;
+        price = _price;
         specHash = _specHash;
         state = State.UNFUNDED;
     }
 
-    /// @notice Customer funds the escrow with exactly PRICE USDT.
+    /// @notice Customer funds the escrow with exactly its price.
     /// The token is pulled via transferFrom, so the customer must approve
     /// the escrow first. Any other amount fails (allowance or balance).
     function fund() external onlyCustomer {
@@ -79,10 +90,10 @@ contract JobEscrow {
         fundedAt = block.timestamp;
         state = State.FUNDED;
         require(
-            IERC20MinimalEscrow(token).transferFrom(msg.sender, address(this), PRICE),
+            IERC20MinimalEscrow(token).transferFrom(msg.sender, address(this), price),
             "JobEscrow: fund failed"
         );
-        emit Funded(msg.sender, PRICE, fundedAt);
+        emit Funded(msg.sender, price, fundedAt);
     }
 
     /// @notice Seal the deliverable hash. Callable once, only via the vault
@@ -95,48 +106,48 @@ contract JobEscrow {
         emit DeliverableSubmitted(_deliverableHash);
     }
 
-    /// @notice Customer accepts the delivered work: PRICE goes to the vault
+    /// @notice Customer accepts the delivered work: the price goes to the vault
     /// and the locked bond is released back to the vault's BOND bucket.
     function accept() external onlyCustomer {
         require(state == State.FUNDED, "JobEscrow: not funded");
         require(deliverableHash != bytes32(0), "JobEscrow: no deliverable");
         state = State.ACCEPTED;
         require(
-            IERC20MinimalEscrow(token).transfer(ikengaVault, PRICE),
+            IERC20MinimalEscrow(token).transfer(ikengaVault, price),
             "JobEscrow: release failed"
         );
-        IVaultMinimal(ikengaVault).creditEscrowRelease(PRICE);
+        IVaultMinimal(ikengaVault).creditEscrowRelease(price);
         IVaultMinimal(ikengaVault).releaseBond(address(this));
-        emit Accepted(msg.sender, PRICE);
+        emit Accepted(msg.sender, price);
     }
 
-    /// @notice Customer rejects the work: PRICE is refunded and the vault
+    /// @notice Customer rejects the work: the price is refunded and the vault
     /// pays the locked bond to the customer as well.
     function reject() external onlyCustomer {
         require(state == State.FUNDED, "JobEscrow: not funded");
         state = State.REJECTED;
         require(
-            IERC20MinimalEscrow(token).transfer(customer, PRICE),
+            IERC20MinimalEscrow(token).transfer(customer, price),
             "JobEscrow: refund failed"
         );
         if (bondAmount > 0) {
             IVaultMinimal(ikengaVault).payBond(address(this), customer);
         }
-        emit Rejected(msg.sender, PRICE, bondAmount);
+        emit Rejected(msg.sender, price, bondAmount);
     }
 
-    /// @notice After 48h of silence anyone may release PRICE to the vault.
+    /// @notice After 48h of silence anyone may release the price to the vault.
     /// The bond lock is released with it.
     function deadlineRelease() external {
         require(state == State.FUNDED, "JobEscrow: not funded");
         require(block.timestamp >= fundedAt + DEADLINE, "JobEscrow: deadline not reached");
         state = State.RELEASED;
         require(
-            IERC20MinimalEscrow(token).transfer(ikengaVault, PRICE),
+            IERC20MinimalEscrow(token).transfer(ikengaVault, price),
             "JobEscrow: release failed"
         );
-        IVaultMinimal(ikengaVault).creditEscrowRelease(PRICE);
+        IVaultMinimal(ikengaVault).creditEscrowRelease(price);
         IVaultMinimal(ikengaVault).releaseBond(address(this));
-        emit DeadlineReleased(PRICE, block.timestamp);
+        emit DeadlineReleased(price, block.timestamp);
     }
 }

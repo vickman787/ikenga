@@ -41,9 +41,14 @@ import celoDeploy from "../../../../contracts/deployments/celo.json";
 // the web app has no viem dependency of its own). The routes import
 // them from here. */
 export { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifyTxReceipt } from "@ikenga/payments";
-import { resolveAttributionTag as resolveTag } from "@ikenga/payments";
+import { resolveAttributionTag as resolveTag, TextileClient, TEXTILE_CELO_TOKENS, cngnJobPrice } from "@ikenga/payments";
 import { IKENGA_AGENT_WALLET } from "./agentRegistration";
 export type { EscrowOnchain, TxReceiptCheck } from "@ikenga/payments";
+
+/** The currencies a $1 job can be paid in. USDT on mainnet, test USDC on Sepolia, cNGN on mainnet. */
+export type PayCurrency = "USDT" | "USDC" | "cNGN";
+/** Celo mainnet cNGN (6 decimals) — the token a cNGN job's escrow holds. */
+export const CNGN_TOKEN_ADDRESS = TEXTILE_CELO_TOKENS.cNGN as string;
 
 /** Plain-words label for what the team is doing right now, for any job type. */
 export function deliveryStageLabel(jobType: JobType, stage: number): string {
@@ -54,6 +59,9 @@ export const HireInputSchema = z.object({
   jobType: z.enum(JOB_TYPES),
   description: z.string().min(1, "Describe the job").max(500),
   customerWallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "Enter a valid wallet address (0x…)"),
+  /** Which currency to pay the $1 in. USDT on mainnet, cNGN on mainnet,
+   * test USDC on Sepolia. Defaults to the chain's own currency. */
+  payCurrency: z.enum(["USDT", "USDC", "cNGN"]).optional(),
 });
 export type HireInput = z.infer<typeof HireInputSchema>;
 
@@ -73,6 +81,16 @@ export interface HireResult {
   status: "draft" | "escrowed" | "in-progress" | "delivered" | "accepted" | "rejected" | "refunded";
   priceUsdc: number;
   bondUsdc: number;
+  /** Which currency this job is paid in, and the exact price fixed at
+   * hire time in that currency's atomic units (6 decimals). USDT/USDC
+   * jobs are always "1000000"; a cNGN job is the live-rate amount
+   * (about "1445000000") with the rate it was fixed at. The customer
+   * pays exactly priceAtomic — never a re-derived amount. */
+  payCurrency: PayCurrency;
+  priceAtomic: string;
+  priceRate: string | null;
+  tokenAddress: string;
+  vaultAddress: string;
   cfoAccepted: boolean;
   cfoReason: string;
   decisionHash: string;
@@ -89,7 +107,13 @@ export interface HireResult {
   escrowState: "unfunded" | "funded" | "accepted" | "rejected" | "released" | null;
 }
 
-/** Which chain a job's escrow lives on, and what it pays with. */
+/** Which chain a job's escrow lives on, and what it pays with. The
+ * single vaultAddress / tokenAddress / tokenSymbol / priceAtomic are
+ * the chain's default currency (USDT on mainnet, test USDC on Sepolia)
+ * for older callers; a job's own payment comes from its job record.
+ * tokens / vaults / payTokens list every currency a job can be paid in
+ * on this chain — mainnet has USDT and cNGN, each with its own vault;
+ * Sepolia has test USDC only, because there is no cNGN on Sepolia. */
 export interface ChainConfig {
   chainId: number;
   chainName: string;
@@ -115,6 +139,12 @@ export interface ChainConfig {
    * a secret. The bill page shows it when funding is needed.
    */
   agentWallet: string;
+  /** Currencies a job can be paid in on this chain. */
+  payTokens: PayCurrency[];
+  /** Token address per currency (absent when the currency is not on this chain). */
+  tokens: Partial<Record<PayCurrency, string>>;
+  /** Vault address per currency (absent when the vault is not deployed yet). */
+  vaults: Partial<Record<PayCurrency, string>>;
 }
 
 /**
@@ -149,8 +179,13 @@ export function getChainConfig(): ChainConfig {
       explorerUrl: "https://celo-sepolia.blockscout.com",
       attributionTag: chainAttributionTag(),
       agentWallet: IKENGA_AGENT_WALLET,
+      payTokens: ["USDC"],
+      tokens: { USDC: tokenAddress },
+      vaults: { USDC: vaultAddress },
     };
   }
+  const cngnVaultAddress =
+    process.env.IKENGA_CNGN_VAULT_ADDRESS ?? (celoDeploy as { cngnVault?: string | null }).cngnVault ?? null;
   return {
     chainId: 42220,
     chainName: "Celo",
@@ -162,7 +197,39 @@ export function getChainConfig(): ChainConfig {
     explorerUrl: "https://celoscan.io",
     attributionTag: chainAttributionTag(),
     agentWallet: IKENGA_AGENT_WALLET,
+    payTokens: ["USDT", "cNGN"],
+    tokens: { USDT: process.env.IKENGA_TOKEN_ADDRESS ?? celoDeploy.token.USDT, cNGN: CNGN_TOKEN_ADDRESS },
+    vaults: {
+      USDT: process.env.IKENGA_VAULT_ADDRESS ?? celoDeploy.IkengaVault,
+      ...(cngnVaultAddress ? { cNGN: cngnVaultAddress } : {}),
+    },
   };
+}
+
+/**
+ * The live cNGN price of $1, from a Textile FX preview: sell exactly $1
+ * of USDT, read back how much cNGN comes out. Read-only, no key, no
+ * signing. Throws in plain words when the rate can't be read — a job
+ * must never be hired on a guessed price.
+ */
+export async function liveCngnUsdPreviewBuyAmount(): Promise<string> {
+  let preview;
+  try {
+    preview = await new TextileClient().previewQuote({
+      chainId: 42220,
+      sellToken: TEXTILE_CELO_TOKENS.USDT as string,
+      buyToken: CNGN_TOKEN_ADDRESS,
+      sellAmount: "1000000",
+    });
+  } catch (err) {
+    throw new Error(
+      `Could not read the live naira rate right now — pay in USDT, or try again in a moment. (${err instanceof Error ? err.message : "unknown error"})`,
+    );
+  }
+  if (preview.kind === "no_quote") {
+    throw new Error("No naira rate is available right now — pay in USDT, or try again in a moment.");
+  }
+  return preview.buyAmount;
 }
 
 /**
@@ -241,6 +308,7 @@ function escrowStateFor(o: LedgerOrder): HireResult["escrowState"] {
 }
 
 function orderToHire(o: LedgerOrder): HireResult {
+  const payCurrency = (o.payCurrency ?? "USDT") as PayCurrency;
   return {
     id: o.id,
     jobType: o.jobType as JobType,
@@ -249,6 +317,11 @@ function orderToHire(o: LedgerOrder): HireResult {
     status: o.status as HireResult["status"],
     priceUsdc: o.priceMicroUsdc / 1_000_000,
     bondUsdc: (o.bondMicroUsdc ?? 100_000) / 1_000_000,
+    payCurrency,
+    priceAtomic: o.priceAtomic ?? "1000000",
+    priceRate: o.priceRate ?? null,
+    tokenAddress: o.tokenAddress ?? "",
+    vaultAddress: o.vaultAddress ?? "",
     cfoAccepted: o.cfoAccepted ?? true,
     cfoReason: o.cfoReason ?? "",
     decisionHash: o.decisionHash ?? "",
@@ -451,8 +524,44 @@ export function progressToCreative(progress: CreativeProgress): StoredReport {
   };
 }
 
-export async function createHire(input: HireInput): Promise<HireResult> {
+/**
+ * Test seam: replace the live cNGN preview with a fixed buy amount
+ * (atomic cNGN for selling $1 of USDT). Live runs always read the real
+ * rate; tests must never depend on it.
+ */
+export interface CreateHireDeps {
+  previewCngnUsd?: () => Promise<string>;
+}
+
+export async function createHire(input: HireInput, deps: CreateHireDeps = {}): Promise<HireResult> {
   const parsed = HireInputSchema.parse(input);
+  const config = getChainConfig();
+  // The currency defaults to the chain's own: USDT on mainnet, test
+  // USDC on Sepolia. Anything else must be offered on this chain.
+  const currency = (parsed.payCurrency ?? config.tokenSymbol) as PayCurrency;
+  if (!config.payTokens.includes(currency)) {
+    throw new Error(
+      `${currency} isn't a way to pay on ${config.chainName} — pay in ${config.tokenSymbol} here.`,
+    );
+  }
+  const tokenAddress = config.tokens[currency];
+  const vaultAddress = config.vaults[currency];
+  if (!tokenAddress || !vaultAddress) {
+    throw new Error(
+      `${currency} payments aren't switched on yet — pay in ${config.tokenSymbol} for now.`,
+    );
+  }
+  // The price is fixed NOW, at hire time, and stored on the job: USDT
+  // is always $1 (1,000,000 atomic); cNGN is the live rate, rounded up
+  // to whole naira. A later rate move never changes a hired job's price.
+  let priceAtomic = "1000000";
+  let priceRate: string | null = null;
+  if (currency === "cNGN") {
+    const buyAmount = await (deps.previewCngnUsd?.() ?? liveCngnUsdPreviewBuyAmount());
+    const fixed = cngnJobPrice(buyAmount);
+    priceAtomic = fixed.priceAtomic.toString();
+    priceRate = fixed.rateCngnPerUsd;
+  }
   const quote = priceJob({
     jobType: parsed.jobType,
     toolCostUsdc: ESTIMATED_TOOL_COST_USDC[parsed.jobType],
@@ -464,7 +573,8 @@ export async function createHire(input: HireInput): Promise<HireResult> {
   // The decision hash is known before the decision is appended: a new
   // order has an empty chain, so the first link hashes from the genesis
   // hash. Store it on the order row so the hire is complete in one write.
-  const entry = `quote|${quote.reason}|${quote.priceUsdc * 1_000_000}`;
+  // The entry names the currency, so the log says what was actually paid.
+  const entry = `quote|${currency}|${quote.reason}|${priceAtomic}`;
   const decisionHash = chainHash("0".repeat(64), entry);
   // The Postgres decision_log references orders(id) — create the order first.
   await ledger.createOrder({
@@ -480,6 +590,11 @@ export async function createHire(input: HireInput): Promise<HireResult> {
     // would make refunds impossible. The CFO's priceJob still computes
     // a bond for its expected-profit maths; it is not put up on-chain.
     bondMicroUsdc: 0,
+    payCurrency: currency,
+    priceAtomic,
+    priceRate,
+    tokenAddress,
+    vaultAddress,
     cfoAccepted: quote.accepted,
     cfoReason: quote.reason,
     decisionHash,
@@ -490,6 +605,7 @@ export async function createHire(input: HireInput): Promise<HireResult> {
     kind: quote.accepted ? "quote" : "refuse",
     reason: quote.reason,
     amountMicroUsdc: quote.priceUsdc * 1_000_000,
+    currency,
     signature: "0xikenga-step2",
     entry,
   });
@@ -501,6 +617,11 @@ export async function createHire(input: HireInput): Promise<HireResult> {
     status: "draft",
     priceUsdc: quote.priceUsdc,
     bondUsdc: 0,
+    payCurrency: currency,
+    priceAtomic,
+    priceRate,
+    tokenAddress,
+    vaultAddress,
     cfoAccepted: quote.accepted,
     cfoReason: quote.reason,
     decisionHash: decision.hash,

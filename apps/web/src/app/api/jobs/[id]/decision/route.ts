@@ -90,17 +90,19 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   const ledger = await getLedger();
   await ledger.updateOrderEscrow(id, { settleTxHash: body.txHash });
+  const priceLabel = hire.payCurrency === "cNGN" ? `${hire.priceAtomic} atomic cNGN` : "$1";
   if (body.action === "accept") {
     await setHireStatus(id, "accepted");
     await ledger.appendDecision({
       id: `dec_${id}_accept_${Date.now()}`,
       orderId: id,
       kind: "accept",
-      reason: "Customer accepted the work — the $1 in escrow goes to the team.",
+      reason: `Customer accepted the work — the ${priceLabel} in escrow goes to the team.`,
       amountMicroUsdc: hire.priceUsdc * 1_000_000,
+      currency: hire.payCurrency,
       signature: "0xikenga-step2",
       txHash: body.txHash,
-      entry: `accept|Customer accepted the work.|${hire.priceUsdc * 1_000_000}`,
+      entry: `accept|${hire.payCurrency}|Customer accepted the work.|${hire.priceAtomic}`,
     });
   } else {
     await setHireStatus(id, "refunded");
@@ -108,11 +110,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       id: `dec_${id}_reject_${Date.now()}`,
       orderId: id,
       kind: "reject",
-      reason: "Customer turned the work down — the $1 in escrow goes back to them.",
+      reason: `Customer turned the work down — the ${priceLabel} in escrow goes back to them.`,
       amountMicroUsdc: hire.priceUsdc * 1_000_000,
+      currency: hire.payCurrency,
       signature: "0xikenga-step2",
       txHash: body.txHash,
-      entry: `reject|Customer turned the work down.|${hire.priceUsdc * 1_000_000}`,
+      entry: `reject|${hire.payCurrency}|Customer turned the work down.|${hire.priceAtomic}`,
     });
   }
   return NextResponse.json({ job: await getHire(id) });

@@ -8,7 +8,9 @@ import "./MockUSDT.sol";
 
 /// @notice JobEscrow tests (Step 2, plan section 2.4).
 /// Escrow settles in USDT (6 decimals, token address passed in, never hardcoded).
-/// PRICE is exactly 1 USDT = 1_000_000 atomic units.
+/// The escrow price is set at deploy: 1 USDT = 1_000_000 atomic units
+/// for the USDT jobs below; a cNGN job fixes its own price at hire time
+/// (about 1,445 cNGN) — see testCngnPriceFundsAndAccepts.
 contract JobEscrowTest is Test {
     MockUSDT token;
     IkengaVault vault;
@@ -19,13 +21,15 @@ contract JobEscrowTest is Test {
     address agentWallet = address(0xA6E7);
 
     uint256 constant BOND = 200_000; // 0.20 USDT, 20% bond (priceJob mid-range)
+    uint256 constant PRICE = 1_000_000; // $1 in atomic units (6 decimals)
+    uint256 constant CNGN_PRICE = 1_445_000_000; // $1 in cNGN at ~1,444.067 per $1, rounded up to whole cNGN
     bytes32 constant SPEC_HASH = keccak256("ikenga job spec: flyer v1");
 
     function setUp() public {
         token = new MockUSDT();
         vm.prank(boss);
         vault = new IkengaVault(boss, address(token));
-        escrow = new JobEscrow(customer, address(vault), address(token), BOND, SPEC_HASH);
+        escrow = new JobEscrow(customer, address(vault), address(token), BOND, PRICE, SPEC_HASH);
 
         // Boss registers the escrow, funds the vault and locks the bond.
         vm.startPrank(boss);
@@ -58,12 +62,12 @@ contract JobEscrowTest is Test {
     function testFundExactSucceeds() public {
         _fund();
         assertEq(uint256(escrow.state()), uint256(JobEscrow.State.FUNDED));
-        assertEq(token.balanceOf(address(escrow)), escrow.PRICE());
+        assertEq(token.balanceOf(address(escrow)), escrow.price());
         assertEq(token.balanceOf(customer), 10_000_000 - 1_000_000);
     }
 
     function testFundWrongAmountReverts() public {
-        // Allowance below PRICE: transferFrom cannot pull exactly 1 USDT.
+        // Allowance below the price: transferFrom cannot pull exactly 1 USDT.
         vm.prank(customer);
         token.approve(address(escrow), 500_000);
         vm.prank(customer);
@@ -229,11 +233,78 @@ contract JobEscrowTest is Test {
         escrow.submitDeliverable(keccak256("direct"));
     }
 
+    // ---- cNGN price (a $1 job paid in cNGN) ----
+
+    function testCngnPriceFundsAndAccepts() public {
+        // The same MockUSDT stands in for cNGN here (both 6 decimals):
+        // the escrow only cares about the token address and the price it
+        // was deployed with, never the token's name.
+        JobEscrow cngnEscrow = new JobEscrow(customer, address(vault), address(token), 0, CNGN_PRICE, SPEC_HASH);
+        vm.prank(boss);
+        vault.registerEscrow(address(cngnEscrow));
+        assertEq(cngnEscrow.price(), CNGN_PRICE);
+        // The customer needs the full cNGN price, not the $1 USDT amount.
+        token.mint(customer, CNGN_PRICE);
+        vm.prank(customer);
+        token.approve(address(cngnEscrow), CNGN_PRICE);
+        vm.prank(customer);
+        cngnEscrow.fund();
+        assertEq(uint256(cngnEscrow.state()), uint256(JobEscrow.State.FUNDED));
+        assertEq(token.balanceOf(address(cngnEscrow)), CNGN_PRICE);
+        vm.prank(boss);
+        vault.submitDeliverable(address(cngnEscrow), keccak256("deliverable: flyer png"));
+        uint256 vaultBefore = token.balanceOf(address(vault));
+        uint256 operatingBefore = vault.bucketBalance(IkengaVault.Bucket.OPERATING);
+        vm.prank(customer);
+        cngnEscrow.accept();
+        assertEq(uint256(cngnEscrow.state()), uint256(JobEscrow.State.ACCEPTED));
+        assertEq(token.balanceOf(address(vault)), vaultBefore + CNGN_PRICE);
+        assertEq(vault.bucketBalance(IkengaVault.Bucket.OPERATING), operatingBefore + CNGN_PRICE);
+        assertEq(token.balanceOf(address(cngnEscrow)), 0);
+    }
+
+    function testCngnPriceRejectRefundsFullPrice() public {
+        JobEscrow cngnEscrow = new JobEscrow(customer, address(vault), address(token), 0, CNGN_PRICE, SPEC_HASH);
+        vm.prank(boss);
+        vault.registerEscrow(address(cngnEscrow));
+        token.mint(customer, CNGN_PRICE);
+        vm.prank(customer);
+        token.approve(address(cngnEscrow), CNGN_PRICE);
+        vm.prank(customer);
+        cngnEscrow.fund();
+        uint256 customerBefore = token.balanceOf(customer);
+        vm.prank(customer);
+        cngnEscrow.reject();
+        assertEq(uint256(cngnEscrow.state()), uint256(JobEscrow.State.REJECTED));
+        assertEq(token.balanceOf(customer), customerBefore + CNGN_PRICE);
+    }
+
+    function testTwoPricesCoexist() public {
+        // A $1 USDT escrow and a cNGN escrow side by side: each holds
+        // exactly its own price, and funding one never touches the other.
+        JobEscrow cngnEscrow = new JobEscrow(customer, address(vault), address(token), 0, CNGN_PRICE, SPEC_HASH);
+        vm.prank(boss);
+        vault.registerEscrow(address(cngnEscrow));
+        token.mint(customer, CNGN_PRICE);
+        vm.prank(customer);
+        token.approve(address(cngnEscrow), CNGN_PRICE);
+        _fund();
+        vm.prank(customer);
+        cngnEscrow.fund();
+        assertEq(token.balanceOf(address(escrow)), PRICE);
+        assertEq(token.balanceOf(address(cngnEscrow)), CNGN_PRICE);
+    }
+
+    function testZeroPriceReverts() public {
+        vm.expectRevert("JobEscrow: price is zero");
+        new JobEscrow(customer, address(vault), address(token), 0, 0, SPEC_HASH);
+    }
+
     // ---- accounting invariant ----
 
     function testFuzz_BondAmountAccounting(uint256 bondAmount) public {
         bondAmount = bound(bondAmount, 0, 300_000); // 0-30% bond, priceJob range
-        JobEscrow e = new JobEscrow(customer, address(vault), address(token), bondAmount, SPEC_HASH);
+        JobEscrow e = new JobEscrow(customer, address(vault), address(token), bondAmount, PRICE, SPEC_HASH);
         vm.startPrank(boss);
         vault.registerEscrow(address(e));
         vault.lockBond(address(e), bondAmount);
@@ -245,7 +316,7 @@ contract JobEscrowTest is Test {
         uint256 customerBefore = token.balanceOf(customer);
         vm.prank(customer);
         e.reject();
-        // Customer gets PRICE back plus exactly the bond for this escrow.
+        // Customer gets the price back plus exactly the bond for this escrow.
         assertEq(token.balanceOf(customer), customerBefore + 1_000_000 + bondAmount);
         assertEq(token.balanceOf(address(e)), 0);
     }

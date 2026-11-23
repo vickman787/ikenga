@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeFunctionData, encodeDeployData, encodeFunctionData, parseAbi } from "viem";
+import { decodeAbiParameters, decodeFunctionData, encodeDeployData, encodeFunctionData, parseAbi } from "viem";
 import { parseAttribution, stripAttribution } from "@ikenga/payments";
 import {
   JOB_ESCROW_BYTECODE,
@@ -64,6 +64,43 @@ describe("tagCalldata — the customer's own transactions carry the tag", () => 
     });
     const tagged = tagCalldata(data, testChain(TAG));
     expect(tagged.startsWith(data)).toBe(true);
+    expect(parseAttribution(tagged)?.codes).toContain(TAG);
+  });
+
+  it("a cNGN escrow deploys with the cNGN token and the fixed cNGN price, tagged", () => {
+    const cngn = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f";
+    const cngnVault = "0x00000000000000000000000000000000000000c1";
+    const price = 1_445_000_000n;
+    const data = encodeDeployData({
+      abi: jobEscrowAbi,
+      bytecode: JOB_ESCROW_BYTECODE,
+      args: [
+        "0x0000000000000000000000000000000000000001",
+        cngnVault,
+        cngn,
+        0n,
+        price,
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+      ],
+    });
+    // The constructor args are the last 6 words (192 bytes) of the deploy data.
+    const argsData = `0x${data.slice(-384)}` as const;
+    const decoded = decodeAbiParameters(
+      [
+        { type: "address" },
+        { type: "address" },
+        { type: "address" },
+        { type: "uint256" },
+        { type: "uint256" },
+        { type: "bytes32" },
+      ],
+      argsData,
+    );
+    expect(decoded[1]?.toLowerCase()).toBe(cngnVault.toLowerCase());
+    expect(decoded[2]?.toLowerCase()).toBe(cngn.toLowerCase());
+    expect(decoded[3]).toBe(0n); // bond always 0
+    expect(decoded[4]).toBe(price); // the fixed cNGN price, not $1 in USDT units
+    const tagged = tagCalldata(data, testChain(TAG));
     expect(parseAttribution(tagged)?.codes).toContain(TAG);
   });
 

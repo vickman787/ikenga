@@ -143,6 +143,60 @@ describe("escrow → fund → run flow", () => {
     expect(failed.status).toBe(400);
     expect(failed.body.error).toMatch(/didn't go through onchain/);
   });
+
+  it("a cNGN job: escrow and fund are verified against the job's own cNGN price, not $1", async () => {
+    const CNGN_TOKEN = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f";
+    const CNGN_VAULT = "0x00000000000000000000000000000000000000c1";
+    const CNGN_PRICE = 1_445_000_000n;
+    const savedVault = process.env.IKENGA_CNGN_VAULT_ADDRESS;
+    process.env.IKENGA_CNGN_VAULT_ADDRESS = CNGN_VAULT;
+    try {
+      const hire = await createHire(
+        { jobType: "flyers", description: "Flyers", customerWallet: CUSTOMER, payCurrency: "cNGN" },
+        { previewCngnUsd: async () => "1444067000" },
+      );
+      expect(hire.priceAtomic).toBe("1445000000");
+
+      // An escrow holding USDT in the cNGN vault does not match a cNGN job.
+      mockReadEscrow.mockResolvedValue({
+        exists: true, customer: CUSTOMER, vault: CNGN_VAULT, token: TOKEN, state: 0, tokenBalance: 0n, price: 1_000_000n,
+      });
+      const wrongToken = await post(postEscrow, hire.id, { escrowAddress: ESCROW, txHash: DEPLOY_TX });
+      expect(wrongToken.status).toBe(400);
+      expect(wrongToken.body.error).toMatch(/cNGN/);
+
+      // The right token and vault, but the wrong price, is also refused.
+      mockReadEscrow.mockResolvedValue({
+        exists: true, customer: CUSTOMER, vault: CNGN_VAULT, token: CNGN_TOKEN, state: 0, tokenBalance: 0n, price: 1_000_000n,
+      });
+      const wrongPrice = await post(postEscrow, hire.id, { escrowAddress: ESCROW, txHash: DEPLOY_TX });
+      expect(wrongPrice.status).toBe(400);
+      expect(wrongPrice.body.error).toMatch(/different price/);
+
+      // The right everything registers — and funding needs the full
+      // cNGN price, not $1.
+      mockReadEscrow.mockResolvedValue({
+        exists: true, customer: CUSTOMER, vault: CNGN_VAULT, token: CNGN_TOKEN, state: 0, tokenBalance: 0n, price: CNGN_PRICE,
+      });
+      const escrowed = await post(postEscrow, hire.id, { escrowAddress: ESCROW, txHash: DEPLOY_TX });
+      expect(escrowed.status).toBe(200);
+      mockReadEscrow.mockResolvedValue({
+        exists: true, customer: CUSTOMER, vault: CNGN_VAULT, token: CNGN_TOKEN, state: 1, tokenBalance: 1_000_000n, price: CNGN_PRICE,
+      });
+      const short = await post(postFund, hire.id, { txHash: FUND_TX });
+      expect(short.status).toBe(400);
+      expect(short.body.error).toMatch(/less than/);
+      mockReadEscrow.mockResolvedValue({
+        exists: true, customer: CUSTOMER, vault: CNGN_VAULT, token: CNGN_TOKEN, state: 1, tokenBalance: CNGN_PRICE, price: CNGN_PRICE,
+      });
+      const funded = await post(postFund, hire.id, { txHash: FUND_TX });
+      expect(funded.status).toBe(200);
+      expect((await getHire(hire.id))?.status).toBe("escrowed");
+    } finally {
+      if (savedVault === undefined) delete process.env.IKENGA_CNGN_VAULT_ADDRESS;
+      else process.env.IKENGA_CNGN_VAULT_ADDRESS = savedVault;
+    }
+  });
 });
 
 describe("decision route", () => {

@@ -55,7 +55,7 @@ function pass(step: string, detail: string): void {
 }
 
 const escrowAbi = parseAbi([
-  "constructor(address customer, address vault, address token, uint256 bondAmount, bytes32 specHash)",
+  "constructor(address customer, address vault, address token, uint256 bondAmount, uint256 price, bytes32 specHash)",
   "function fund()",
   "function accept()",
   "function reject()",
@@ -63,6 +63,7 @@ const escrowAbi = parseAbi([
   "function customer() view returns (address)",
   "function token() view returns (address)",
   "function ikengaVault() view returns (address)",
+  "function price() view returns (uint256)",
   "function deliverableHash() view returns (bytes32)",
 ]);
 
@@ -111,14 +112,16 @@ async function main(): Promise<void> {
     const deployTx = await wallet.deployContract({
       abi: escrowAbi,
       bytecode,
-      args: [customer, vault, token, 0n, specHash],
+      args: [customer, vault, token, 0n, PRICE, specHash],
       account,
       chain: celoSepolia,
     });
     const deployReceipt = await pub.waitForTransactionReceipt({ hash: deployTx });
     const escrow = deployReceipt.contractAddress;
     if (!escrow) fail(`${label}:deploy`, "no contract address in receipt");
-    pass(`${label}:deploy`, `escrow ${escrow} tx ${deployTx}`);
+    const onchainPrice = await pub.readContract({ address: escrow, abi: escrowAbi, functionName: "price" });
+    if (onchainPrice !== PRICE) fail(`${label}:deploy`, `price()=${onchainPrice}, expected ${PRICE}`);
+    pass(`${label}:deploy`, `escrow ${escrow} tx ${deployTx}, price ${PRICE}`);
 
     const approveTx = await wallet.writeContract({
       address: token,
