@@ -114,3 +114,58 @@ CREATE TABLE IF NOT EXISTS deliveries (
   data JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Naira bills (Corridors track). One person owes a supplier in naira; the
+-- agent wallet changes USDT to cNGN on Textile FX and pays the supplier in
+-- cNGN. No escrow: the swap and the payout are agent-wallet transactions
+-- (the payout carries Ikenga's tag; the swap carries Textile's — risk R-5).
+-- Amounts are whole naira; rates are cNGN per 1 USDT, fee included
+-- (buyAmount / takerPays). The worker updates the row as it watches the
+-- rate, waits for funding, swaps, and pays.
+CREATE TABLE IF NOT EXISTS bills (
+  id TEXT PRIMARY KEY,
+  payer_name TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  amount_ngn BIGINT NOT NULL CHECK (amount_ngn >= 1500),
+  supplier_wallet TEXT NOT NULL,
+  deadline TIMESTAMPTZ NOT NULL,
+  min_rate DOUBLE PRECISION NOT NULL CHECK (min_rate > 0),
+  status TEXT NOT NULL DEFAULT 'created'
+    CHECK (status IN ('created', 'watching', 'converting', 'paid', 'failed')),
+  note TEXT,
+  last_checked_at TIMESTAMPTZ,
+  last_rate DOUBLE PRECISION,
+  last_rate_at TIMESTAMPTZ,
+  last_decision TEXT CHECK (last_decision IS NULL OR last_decision IN ('convert', 'refuse', 'force-convert', 'wait')),
+  last_decision_reason TEXT,
+  last_bps_gap INT,
+  last_naira_saved BIGINT,
+  funding_needed_usdt TEXT,
+  funding_ready BOOLEAN,
+  rfq_id TEXT,
+  approval_tx_hashes TEXT NOT NULL DEFAULT '[]',
+  swap_tx_hash TEXT,
+  forced BOOLEAN NOT NULL DEFAULT FALSE,
+  payout_tx_hash TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One hash-chained receipt per bill event — the same chaining as the CFO
+-- decision log, so a bill's history can't be rewritten silently.
+CREATE TABLE IF NOT EXISTS bill_events (
+  id TEXT PRIMARY KEY,
+  bill_id TEXT NOT NULL REFERENCES bills(id),
+  kind TEXT NOT NULL
+    CHECK (kind IN ('created', 'quote', 'refuse', 'convert', 'swap', 'payout', 'paid', 'failed', 'waiting')),
+  reason TEXT NOT NULL,
+  rate_seen DOUBLE PRECISION,
+  bps_gap INT,
+  tx_hash TEXT,
+  prev_hash TEXT NOT NULL,
+  hash TEXT NOT NULL,
+  entry_text TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS bill_events_bill_idx ON bill_events (bill_id, created_at);

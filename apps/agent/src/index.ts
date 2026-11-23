@@ -42,3 +42,19 @@ export {
 export { searchBing, searchWeb, searchWikipedia, fetchPageText, parseBingHtml, parseDuckDuckGoLite, type SearchResult, type SourcePage } from "./search.js";
 export { ToolRegistry, type ToolSeller } from "./tools.js";
 export { decideFx, bpsGap, type FxDecision } from "./fx.js";
+export {
+  billBuyAmountAtomic,
+  CNGN_ADDRESS,
+  formatUsdtAtomic,
+  makeBillSendFn,
+  payoutCalldata,
+  processBills,
+  quoteRate,
+  taggedPayoutCalldata,
+  TEXTILE_REACTOR,
+  USDT_ADDRESS,
+  type BillProcessResult,
+  type BillRuntime,
+  type BillUpdate,
+  type SiteBill,
+} from "./bills.js";

@@ -161,6 +161,92 @@ export interface Reconciliation {
   failed: number;
 }
 
+/** A naira bill: one person owes a supplier in naira, and Ikenga changes
+ * USDT to cNGN on Textile FX and pays the supplier in cNGN. The bill is
+ * the Corridors-track job: it is NOT a $1 job and it has no escrow — the
+ * agent wallet holds the USDT, swaps it, and pays cNGN straight to the
+ * supplier's wallet. Amounts are whole naira; rates are cNGN per 1 USDT. */
+export type BillStatus = "created" | "watching" | "converting" | "paid" | "failed";
+export type BillDecision = "convert" | "refuse" | "force-convert" | "wait";
+
+export interface LedgerBill {
+  id: string;
+  payerName: string;
+  purpose: string;
+  /** Whole naira the supplier is owed (e.g. 1500 = ₦1,500). Minimum 1500 — about $1, the corridor floor. */
+  amountNgn: number;
+  supplierWallet: string;
+  deadline: string;
+  /** Lowest rate the payer will accept, cNGN per 1 USDT. */
+  minRate: number;
+  status: BillStatus;
+  /** Plain-words note on where the bill stands (funding needed, rate too low, …). Null until checked. */
+  note: string | null;
+  lastCheckedAt: string | null;
+  /** Latest rate seen (cNGN per USDT, fee included — buyAmount / takerPays). */
+  lastRate: number | null;
+  lastRateAt: string | null;
+  lastDecision: BillDecision | null;
+  lastDecisionReason: string | null;
+  lastBpsGap: number | null;
+  /** Naira a refusal saved vs converting at the rate seen (whole cNGN). */
+  lastNairaSaved: number | null;
+  /** USDT the agent wallet needs to hold to pay this bill (from the preview's takerPays). */
+  fundingNeededUsdt: string | null;
+  /** Null = not checked yet. */
+  fundingReady: boolean | null;
+  /** The firm quote being worked, if any. */
+  rfqId: string | null;
+  /** Tagged USDT approval tx(s) before the swap. */
+  approvalTxHashes: string[];
+  /** The swap itself. Carries Textile's tag, never Ikenga's — see textile.ts (risk R-5). */
+  swapTxHash: string | null;
+  /** True when the swap went ahead at the deadline below the minimum rate. */
+  forced: boolean;
+  /** The tagged cNGN payout to the supplier — the transaction that carries Ikenga's tag. */
+  payoutTxHash: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One receipt in a bill's hash chain — the same chaining as the CFO
+ * decision log, so a bill's history can't be rewritten silently. */
+export type BillEventKind = "created" | "quote" | "refuse" | "convert" | "swap" | "payout" | "paid" | "failed" | "waiting";
+
+export interface BillEvent {
+  id: string;
+  billId: string;
+  kind: BillEventKind;
+  reason: string;
+  rateSeen: number | null;
+  bpsGap: number | null;
+  txHash: string | null;
+  prevHash: string;
+  hash: string;
+  entryText?: string;
+  createdAt: string;
+}
+
+/** Fields the boss worker may change on a bill. Only the fields present change. */
+export interface BillPatch {
+  status?: BillStatus;
+  note?: string | null;
+  lastCheckedAt?: string;
+  lastRate?: number | null;
+  lastRateAt?: string | null;
+  lastDecision?: BillDecision | null;
+  lastDecisionReason?: string | null;
+  lastBpsGap?: number | null;
+  lastNairaSaved?: number | null;
+  fundingNeededUsdt?: string | null;
+  fundingReady?: boolean | null;
+  rfqId?: string | null;
+  approvalTxHashes?: string[];
+  swapTxHash?: string | null;
+  forced?: boolean;
+  payoutTxHash?: string | null;
+}
+
 export interface Ledger {
   createOrder(order: Omit<LedgerOrder, "createdAt" | "priceMicroUsdc"> & { priceMicroUsdc?: number }): Promise<LedgerOrder>;
   getOrder(id: string): Promise<LedgerOrder | null>;
@@ -187,6 +273,17 @@ export interface Ledger {
   recordX402Payment(p: X402PaymentRecord): Promise<X402PaymentRecord>;
   /** Reconcile an order's payments: settled = tx hash present, unresolved = none, failed = failed/ambiguous. */
   reconcile(orderId: string): Promise<Reconciliation>;
+  /** A naira bill (Corridors track): someone owes a supplier in naira. */
+  createBill(bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">): Promise<LedgerBill>;
+  getBill(id: string): Promise<LedgerBill | null>;
+  listBills(): Promise<LedgerBill[]>;
+  /** Change a bill's fields (boss worker progress). Only the fields present change. */
+  updateBill(id: string, patch: BillPatch): Promise<LedgerBill | null>;
+  /** Append one receipt to a bill's hash chain. */
+  appendBillEvent(e: Omit<BillEvent, "prevHash" | "hash" | "createdAt"> & { entry: string }): Promise<BillEvent>;
+  listBillEvents(billId: string): Promise<BillEvent[]>;
+  /** Verify the hash chain for one bill. True when the chain is intact. */
+  verifyBillChain(billId: string): Promise<boolean>;
 }
 
 export class MemoryLedger implements Ledger {
@@ -196,6 +293,8 @@ export class MemoryLedger implements Ledger {
   private selfVerifications: SelfVerificationRecord[] = [];
   private x402Payments = new Map<string, X402PaymentRecord[]>();
   private reports = new Map<string, StoredReportData>();
+  private bills = new Map<string, LedgerBill>();
+  private billEvents = new Map<string, BillEvent[]>();
 
   async createOrder(order: Omit<LedgerOrder, "createdAt" | "priceMicroUsdc"> & { priceMicroUsdc?: number }): Promise<LedgerOrder> {
     const full: LedgerOrder = {
@@ -303,6 +402,79 @@ export class MemoryLedger implements Ledger {
       unresolved: payments.filter((p) => p.status === "verified" && !p.txHash).length,
       failed: payments.filter((p) => p.status === "failed" || p.status === "ambiguous").length,
     };
+  }
+
+  async createBill(
+    bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">,
+  ): Promise<LedgerBill> {
+    const now = new Date().toISOString();
+    const full: LedgerBill = {
+      ...bill,
+      status: "created",
+      note: null,
+      lastCheckedAt: null,
+      lastRate: null,
+      lastRateAt: null,
+      lastDecision: null,
+      lastDecisionReason: null,
+      lastBpsGap: null,
+      lastNairaSaved: null,
+      fundingNeededUsdt: null,
+      fundingReady: null,
+      rfqId: null,
+      approvalTxHashes: [],
+      swapTxHash: null,
+      forced: false,
+      payoutTxHash: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.bills.set(full.id, full);
+    return full;
+  }
+
+  async getBill(id: string): Promise<LedgerBill | null> {
+    return this.bills.get(id) ?? null;
+  }
+
+  async listBills(): Promise<LedgerBill[]> {
+    return [...this.bills.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async updateBill(id: string, patch: BillPatch): Promise<LedgerBill | null> {
+    const bill = this.bills.get(id);
+    if (!bill) return null;
+    Object.assign(bill, patch, { updatedAt: new Date().toISOString() });
+    return bill;
+  }
+
+  async appendBillEvent(e: Omit<BillEvent, "prevHash" | "hash" | "createdAt"> & { entry: string }): Promise<BillEvent> {
+    const list = this.billEvents.get(e.billId) ?? [];
+    const prevHash = list.length === 0 ? "0".repeat(64) : list[list.length - 1].hash;
+    const full: BillEvent = {
+      ...e,
+      prevHash,
+      hash: chainHash(prevHash, e.entry),
+      entryText: e.entry,
+      rateSeen: e.rateSeen ?? null,
+      bpsGap: e.bpsGap ?? null,
+      txHash: e.txHash ?? null,
+      createdAt: new Date().toISOString(),
+    };
+    list.push(full);
+    this.billEvents.set(e.billId, list);
+    return full;
+  }
+
+  async listBillEvents(billId: string): Promise<BillEvent[]> {
+    return [...(this.billEvents.get(billId) ?? [])];
+  }
+
+  async verifyBillChain(billId: string): Promise<boolean> {
+    const list = this.billEvents.get(billId) ?? [];
+    return verifyChain(
+      list.map((e) => ({ prevHash: e.prevHash, hash: e.hash, entry: e.entryText ?? `${e.kind}|${e.reason}` })),
+    );
   }
 }
 
@@ -516,6 +688,157 @@ export class PostgresLedger implements Ledger {
       failed: rows.filter((r: Record<string, unknown>) => r.status === "failed" || r.status === "ambiguous").length,
     };
   }
+
+  async createBill(
+    bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">,
+  ): Promise<LedgerBill> {
+    const { rows } = await this.pool.query(
+      `INSERT INTO bills (id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'created') RETURNING ${BILL_COLS}`,
+      [bill.id, bill.payerName, bill.purpose, bill.amountNgn, bill.supplierWallet, bill.deadline, bill.minRate],
+    );
+    return rowToBill(rows[0]);
+  }
+
+  async getBill(id: string): Promise<LedgerBill | null> {
+    const { rows } = await this.pool.query(`SELECT ${BILL_COLS} FROM bills WHERE id = $1`, [id]);
+    return rows.length === 0 ? null : rowToBill(rows[0]);
+  }
+
+  async listBills(): Promise<LedgerBill[]> {
+    const { rows } = await this.pool.query(`SELECT ${BILL_COLS} FROM bills ORDER BY created_at ASC`);
+    return rows.map(rowToBill);
+  }
+
+  async updateBill(id: string, patch: BillPatch): Promise<LedgerBill | null> {
+    // Only the fields present in the patch change; the rest are left alone.
+    const sets: string[] = [];
+    const values: unknown[] = [id];
+    const columns: [string, unknown][] = [
+      ["status", patch.status],
+      ["note", patch.note === undefined ? undefined : patch.note],
+      ["last_checked_at", patch.lastCheckedAt],
+      ["last_rate", patch.lastRate === undefined ? undefined : patch.lastRate],
+      ["last_rate_at", patch.lastRateAt],
+      ["last_decision", patch.lastDecision === undefined ? undefined : patch.lastDecision],
+      ["last_decision_reason", patch.lastDecisionReason === undefined ? undefined : patch.lastDecisionReason],
+      ["last_bps_gap", patch.lastBpsGap === undefined ? undefined : patch.lastBpsGap],
+      ["last_naira_saved", patch.lastNairaSaved === undefined ? undefined : patch.lastNairaSaved],
+      ["funding_needed_usdt", patch.fundingNeededUsdt === undefined ? undefined : patch.fundingNeededUsdt],
+      ["funding_ready", patch.fundingReady === undefined ? undefined : patch.fundingReady],
+      ["rfq_id", patch.rfqId === undefined ? undefined : patch.rfqId],
+      ["approval_tx_hashes", patch.approvalTxHashes === undefined ? undefined : JSON.stringify(patch.approvalTxHashes)],
+      ["swap_tx_hash", patch.swapTxHash === undefined ? undefined : patch.swapTxHash],
+      ["forced", patch.forced],
+      ["payout_tx_hash", patch.payoutTxHash === undefined ? undefined : patch.payoutTxHash],
+    ];
+    for (const [column, value] of columns) {
+      if (value !== undefined) {
+        values.push(value);
+        sets.push(`${column} = $${values.length}`);
+      }
+    }
+    if (sets.length === 0) return this.getBill(id);
+    sets.push("updated_at = now()");
+    const { rows } = await this.pool.query(
+      `UPDATE bills SET ${sets.join(", ")} WHERE id = $1 RETURNING ${BILL_COLS}`,
+      values,
+    );
+    return rows.length === 0 ? null : rowToBill(rows[0]);
+  }
+
+  async appendBillEvent(e: Omit<BillEvent, "prevHash" | "hash" | "createdAt"> & { entry: string }): Promise<BillEvent> {
+    // One transaction: read the last hash, append the new link.
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const last = await client.query(
+        `SELECT hash FROM bill_events WHERE bill_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [e.billId],
+      );
+      const prevHash = last.rows.length === 0 ? "0".repeat(64) : last.rows[0].hash;
+      const hash = chainHash(prevHash, e.entry);
+      const { rows } = await client.query(
+        `INSERT INTO bill_events (id, bill_id, kind, reason, rate_seen, bps_gap, tx_hash, prev_hash, hash, entry_text)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, bill_id, kind, reason, rate_seen, bps_gap, tx_hash, prev_hash, hash, entry_text, created_at`,
+        [e.id, e.billId, e.kind, e.reason, e.rateSeen ?? null, e.bpsGap ?? null, e.txHash ?? null, prevHash, hash, e.entry],
+      );
+      await client.query("COMMIT");
+      return rowToBillEvent(rows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listBillEvents(billId: string): Promise<BillEvent[]> {
+    const { rows } = await this.pool.query(
+      `SELECT id, bill_id, kind, reason, rate_seen, bps_gap, tx_hash, prev_hash, hash, entry_text, created_at
+       FROM bill_events WHERE bill_id = $1 ORDER BY created_at ASC`,
+      [billId],
+    );
+    return rows.map(rowToBillEvent);
+  }
+
+  async verifyBillChain(billId: string): Promise<boolean> {
+    const list = await this.listBillEvents(billId);
+    return verifyChain(
+      list.map((e) => ({ prevHash: e.prevHash, hash: e.hash, entry: e.entryText ?? `${e.kind}|${e.reason}` })),
+    );
+  }
+}
+
+/** Every column of the bills table, in one place. */
+const BILL_COLS =
+  "id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, status, note, last_checked_at, last_rate, last_rate_at, last_decision, last_decision_reason, last_bps_gap, last_naira_saved, funding_needed_usdt, funding_ready, rfq_id, approval_tx_hashes, swap_tx_hash, forced, payout_tx_hash, created_at, updated_at";
+
+function rowToBill(r: Record<string, unknown>): LedgerBill {
+  return {
+    id: String(r.id),
+    payerName: String(r.payer_name),
+    purpose: String(r.purpose),
+    amountNgn: Number(r.amount_ngn),
+    supplierWallet: String(r.supplier_wallet),
+    deadline: r.deadline instanceof Date ? r.deadline.toISOString() : String(r.deadline),
+    minRate: Number(r.min_rate),
+    status: String(r.status) as LedgerBill["status"],
+    note: r.note === null || r.note === undefined ? null : String(r.note),
+    lastCheckedAt: r.last_checked_at instanceof Date ? r.last_checked_at.toISOString() : r.last_checked_at ? String(r.last_checked_at) : null,
+    lastRate: r.last_rate === null || r.last_rate === undefined ? null : Number(r.last_rate),
+    lastRateAt: r.last_rate_at instanceof Date ? r.last_rate_at.toISOString() : r.last_rate_at ? String(r.last_rate_at) : null,
+    lastDecision: r.last_decision === null || r.last_decision === undefined ? null : String(r.last_decision) as LedgerBill["lastDecision"],
+    lastDecisionReason: r.last_decision_reason === null || r.last_decision_reason === undefined ? null : String(r.last_decision_reason),
+    lastBpsGap: r.last_bps_gap === null || r.last_bps_gap === undefined ? null : Number(r.last_bps_gap),
+    lastNairaSaved: r.last_naira_saved === null || r.last_naira_saved === undefined ? null : Number(r.last_naira_saved),
+    fundingNeededUsdt: r.funding_needed_usdt === null || r.funding_needed_usdt === undefined ? null : String(r.funding_needed_usdt),
+    fundingReady: r.funding_ready === null || r.funding_ready === undefined ? null : Boolean(r.funding_ready),
+    rfqId: r.rfq_id === null || r.rfq_id === undefined ? null : String(r.rfq_id),
+    approvalTxHashes: r.approval_tx_hashes ? JSON.parse(String(r.approval_tx_hashes)) as string[] : [],
+    swapTxHash: r.swap_tx_hash === null || r.swap_tx_hash === undefined ? null : String(r.swap_tx_hash),
+    forced: Boolean(r.forced),
+    payoutTxHash: r.payout_tx_hash === null || r.payout_tx_hash === undefined ? null : String(r.payout_tx_hash),
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+    updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
+  };
+}
+
+function rowToBillEvent(r: Record<string, unknown>): BillEvent {
+  return {
+    id: String(r.id),
+    billId: String(r.bill_id),
+    kind: String(r.kind) as BillEvent["kind"],
+    reason: String(r.reason),
+    rateSeen: r.rate_seen === null || r.rate_seen === undefined ? null : Number(r.rate_seen),
+    bpsGap: r.bps_gap === null || r.bps_gap === undefined ? null : Number(r.bps_gap),
+    txHash: r.tx_hash === null || r.tx_hash === undefined ? null : String(r.tx_hash),
+    prevHash: String(r.prev_hash),
+    hash: String(r.hash),
+    entryText: r.entry_text ? String(r.entry_text) : undefined,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+  };
 }
 
 /** Every column of the orders table, in one place, so the SELECTs and

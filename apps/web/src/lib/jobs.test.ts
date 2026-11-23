@@ -74,6 +74,7 @@ describe("getChainConfig", () => {
         bondAtomic: "0",
         explorerUrl: "https://celoscan.io",
         attributionTag: null,
+        agentWallet: "0x61aD7AEAC0B94C91B4681d1D8624d82d5DaF4Fc0",
       });
     } finally {
       restoreEnv();
@@ -136,6 +137,7 @@ describe("getChainConfig", () => {
         bondAtomic: "0",
         explorerUrl: "https://celo-sepolia.blockscout.com",
         attributionTag: null,
+        agentWallet: "0x61aD7AEAC0B94C91B4681d1D8624d82d5DaF4Fc0",
       });
     } finally {
       restoreEnv();

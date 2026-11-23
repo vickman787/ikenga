@@ -45,6 +45,17 @@
  * Cap: 10 on-chain actions per run. Every boss transaction goes
  * through the repo's own sendTagged(), so it carries the ERC-8021
  * attribution tag.
+ *
+ * Pass 3 — naira bills (mainnet only: there is no Celo testnet
+ * corridor). The worker polls GET /api/bills and runs the pipeline in
+ * ./bills.ts: live preview, funding check, firm quote at or above the
+ * bill's minimum rate (refuse + receipt below it, force-convert at the
+ * deadline), the Textile swap, then the tagged cNGN payout to the
+ * supplier. Tagging: the USDT approval is tagged, the swap is broadcast
+ * exactly as Textile returns it (never re-tagged — it carries Textile's
+ * tag), the payout is tagged. The site may not serve /api/bills yet
+ * (the bills code ships before the site redeploys) — a 404 skips the
+ * pass quietly instead of failing the run.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -53,6 +64,7 @@ import {
   createPublicClient,
   createWalletClient,
   encodeFunctionData,
+  erc20Abi,
   http,
   parseAbi,
   type Address,
@@ -66,8 +78,11 @@ import {
   deliverableHashFor,
   readEscrowOnchain,
   sendTagged,
+  TextileClient,
+  type TakerSigner,
   type DeliverableContent,
 } from "@ikenga/payments";
+import { CNGN_ADDRESS, processBills, type BillRuntime, type SiteBill } from "./bills.js";
 
 /** Mainnet contracts, deployed 2026-11-23 (contracts/deployments/celo.json). Public addresses, not secrets. */
 export const MAINNET_VAULT_ADDRESS = "0x1C2b2E64527B0bA7795ed3CDF7d76da51D24018B" as Address;
@@ -239,7 +254,13 @@ async function fetchJson(url: string, init?: RequestInit): Promise<{ status: num
   return { status: res.status, body };
 }
 
-export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promise<{ registered: number; sealed: number }> {
+export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promise<{
+  registered: number;
+  sealed: number;
+  billsChecked: number;
+  billsConverted: number;
+  billsPaid: number;
+}> {
   loadEnvFile(env);
   const config = resolveBossConfig(env);
   const log = (msg: string) => console.log(`[boss:${config.chain}] ${msg}`);
@@ -417,8 +438,134 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
     }
   }
 
-  log(`done — ${registered} escrow(s) registered, ${sealed} deliverable(s) sealed, ${actions} action(s).`);
-  return { registered, sealed };
+  // Pass 3 — naira bills (mainnet only: there is no Celo testnet
+  // corridor). The pipeline lives in ./bills.ts; this is only the wiring
+  // of real clients around it. A failure here never breaks the job work
+  // above — the bills wait for the next run.
+  let billsChecked = 0;
+  let billsConverted = 0;
+  let billsPaid = 0;
+  if (config.chain !== "mainnet") {
+    log("naira bills run on mainnet only — skipping the bill pass.");
+  } else {
+    try {
+      const billsRes = await fetchJson(`${config.siteUrl}/api/bills`);
+      if (billsRes.status === 404) {
+        // The bills code ships before the site redeploys: the route does
+        // not exist yet. Skip quietly instead of failing the run.
+        log("the site doesn't serve /api/bills yet — skipping the bill pass.");
+      } else if (billsRes.status !== 200 || !Array.isArray(billsRes.body.bills)) {
+        log(`could not list bills from ${config.siteUrl}/api/bills (HTTP ${billsRes.status}) — skipping the bill pass.`);
+      } else {
+        const bills = billsRes.body.bills as SiteBill[];
+        log(`${bills.length} bill(s) on the site.`);
+        const textile = new TextileClient();
+        const signer: TakerSigner = {
+          address: account.address,
+          signTypedData: (args) => account.signTypedData(args),
+        };
+        const billRuntime: BillRuntime = {
+          takerAddress: account.address,
+          preview: (buyAmount) =>
+            textile.previewQuote({
+              chainId: config.chainId,
+              sellToken: config.tokenAddress,
+              buyToken: CNGN_ADDRESS,
+              buyAmount,
+            }),
+          firmQuote: (buyAmount) =>
+            textile.requestFirmQuote(
+              {
+                chainId: config.chainId,
+                sellToken: config.tokenAddress,
+                buyToken: CNGN_ADDRESS,
+                buyAmount,
+                taker: account.address,
+              },
+              { signer },
+            ),
+          cancelQuote: (rfqId, claimToken) => textile.cancelQuote(rfqId, claimToken).then(() => undefined),
+          usdtBalanceOf: (owner) =>
+            publicClient.readContract({
+              address: config.tokenAddress,
+              abi: erc20Abi,
+              functionName: "balanceOf",
+              args: [owner as Address],
+            }),
+          cngnBalanceOf: (owner) =>
+            publicClient.readContract({
+              address: CNGN_ADDRESS,
+              abi: erc20Abi,
+              functionName: "balanceOf",
+              args: [owner as Address],
+            }),
+          celoBalanceOf: (owner) => publicClient.getBalance({ address: owner as Address }),
+          getAllowance: (token, owner, spender) =>
+            publicClient.readContract({
+              address: token as Address,
+              abi: erc20Abi,
+              functionName: "allowance",
+              args: [owner as Address, spender as Address],
+            }),
+          waitForReceipt: (hash) =>
+            publicClient.waitForTransactionReceipt({ hash: hash as Hex }).then((r) => ({ status: r.status })),
+          getReceipt: (hash) =>
+            publicClient
+              .getTransactionReceipt({ hash: hash as Hex })
+              .then((r) => ({ status: r.status }))
+              .catch(() => null),
+          executeSwap: (quote, sendFn, opts) => textile.executeSwap(quote, sendFn, opts),
+          sendTagged: async (tx) =>
+            (
+              await sendTagged(
+                walletClient,
+                {
+                  to: tx.to as Address,
+                  data: tx.data as Hex,
+                  ...(tx.value && tx.value !== "0" ? { value: BigInt(tx.value) } : {}),
+                },
+                { env },
+              )
+            ).hash,
+          sendRaw: async (tx) =>
+            walletClient.sendTransaction({
+              account,
+              chain: viemChain,
+              to: tx.to as Address,
+              data: tx.data as Hex,
+              ...(tx.value && tx.value !== "0" ? { value: BigInt(tx.value) } : {}),
+            }),
+          updateBill: async (id, update) => {
+            const res = await fetchJson(`${config.siteUrl}/api/bills/${id}/update`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(update),
+            });
+            if (res.status !== 200) {
+              throw new Error(
+                `POST /api/bills/${id}/update failed (HTTP ${res.status}: ${JSON.stringify(res.body.error ?? res.body)})`,
+              );
+            }
+          },
+          nowIso: () => new Date().toISOString(),
+          log: (msg) => log(msg),
+        };
+        const billResult = await processBills(bills, billRuntime, MAX_ACTIONS_PER_RUN - actions);
+        actions += billResult.actionsUsed;
+        billsChecked = billResult.checked;
+        billsConverted = billResult.converted;
+        billsPaid = billResult.paid;
+        log(
+          `bills: ${billResult.checked} checked, ${billResult.converted} converted, ${billResult.paid} paid, ${billResult.refused} refused, ${billResult.waiting} waiting, ${billResult.failed} failed.`,
+        );
+      }
+    } catch (err) {
+      log(`bill pass failed (${err instanceof Error ? err.message : "unknown error"}) — the job work above still stands; the next run retries the bills.`);
+    }
+  }
+
+  log(`done — ${registered} escrow(s) registered, ${sealed} deliverable(s) sealed, ${billsChecked} bill(s) checked, ${billsConverted} converted, ${billsPaid} paid, ${actions} action(s).`);
+  return { registered, sealed, billsChecked, billsConverted, billsPaid };
 }
 
 if (process.argv[1]?.endsWith("boss-worker.js")) {

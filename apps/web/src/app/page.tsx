@@ -522,6 +522,9 @@ export default function Home() {
                   and nobody holds your money in the middle.
                 </p>
                 <p className="fine">Bank transfer isn't available yet — the naira side works by changing USDT to cNGN on Celo.</p>
+                <p style={{ marginTop: 12 }}>
+                  <a href="/bills">Owe someone in naira? Pay the bill →</a>
+                </p>
               </div>
               <div className="card paycard">
                 <span className="chip">USDT</span>

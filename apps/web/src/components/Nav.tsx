@@ -12,6 +12,7 @@ const LINKS: [string, string][] = [
   ["#work", "Real work"],
   ["#cfo", "The AI CFO"],
   ["#pay", "Ikenga Pay"],
+  ["/bills", "Pay a naira bill"],
   ["https://github.com/vickman787/ikenga/tree/main/docs", "Docs"],
 ];
 
@@ -20,6 +21,7 @@ const GROUPS: { title: string; items: [string, string, string?][] }[] = [
     title: "Hire the team",
     items: [
       ["#services", "Services", "4 jobs, $1 each"],
+      ["/bills", "Pay a naira bill", "USDT → cNGN for a supplier"],
       ["#how", "How it works"],
       ["#work", "Real work"],
       ["#pay", "Pay in USDT or cNGN"],

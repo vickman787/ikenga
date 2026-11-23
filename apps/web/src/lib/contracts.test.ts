@@ -21,6 +21,7 @@ function testChain(tag: string | null): ChainConfig {
     bondAtomic: "0",
     explorerUrl: "https://celoscan.io",
     attributionTag: tag,
+    agentWallet: "0x61aD7AEAC0B94C91B4681d1D8624d82d5DaF4Fc0",
   };
 }
 

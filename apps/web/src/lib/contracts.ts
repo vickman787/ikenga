@@ -61,6 +61,8 @@ export interface ChainConfig {
    * payment still goes through untagged rather than blocking the job.
    */
   attributionTag: string | null;
+  /** The agent wallet — the public address that holds the USDT for naira bills. */
+  agentWallet: string;
 }
 
 export type EscrowState =

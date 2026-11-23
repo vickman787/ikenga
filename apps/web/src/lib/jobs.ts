@@ -42,6 +42,7 @@ import celoDeploy from "../../../../contracts/deployments/celo.json";
 // them from here. */
 export { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifyTxReceipt } from "@ikenga/payments";
 import { resolveAttributionTag as resolveTag } from "@ikenga/payments";
+import { IKENGA_AGENT_WALLET } from "./agentRegistration";
 export type { EscrowOnchain, TxReceiptCheck } from "@ikenga/payments";
 
 /** Plain-words label for what the team is doing right now, for any job type. */
@@ -108,6 +109,12 @@ export interface ChainConfig {
    * through untagged rather than blocking the job.
    */
   attributionTag: string | null;
+  /**
+   * The agent wallet — the public address that holds the USDT for naira
+   * bills and sends the cNGN to the supplier. Public onchain address, not
+   * a secret. The bill page shows it when funding is needed.
+   */
+  agentWallet: string;
 }
 
 /**
@@ -141,6 +148,7 @@ export function getChainConfig(): ChainConfig {
       bondAtomic: "0",
       explorerUrl: "https://celo-sepolia.blockscout.com",
       attributionTag: chainAttributionTag(),
+      agentWallet: IKENGA_AGENT_WALLET,
     };
   }
   return {
@@ -153,6 +161,7 @@ export function getChainConfig(): ChainConfig {
     bondAtomic: "0",
     explorerUrl: "https://celoscan.io",
     attributionTag: chainAttributionTag(),
+    agentWallet: IKENGA_AGENT_WALLET,
   };
 }
 

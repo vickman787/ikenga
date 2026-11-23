@@ -276,3 +276,85 @@ describe("PostgresLedger (pg-mem)", () => {
     await pool.end();
   });
 });
+
+const BILL_INPUT = {
+  id: "bill_test_1",
+  payerName: "Ada",
+  purpose: "Rice for the shop",
+  amountNgn: 5000,
+  supplierWallet: "0x00000000000000000000000000000000000000aa",
+  deadline: "2026-12-07T09:00:00.000Z",
+  minRate: 1400,
+};
+
+describe("bills (MemoryLedger)", () => {
+  it("creates a bill, patches it, and chains verifiable receipt events", async () => {
+    const ledger = new MemoryLedger();
+    const bill = await ledger.createBill(BILL_INPUT);
+    expect(bill.status).toBe("created");
+    expect(bill.approvalTxHashes).toEqual([]);
+    expect(bill.forced).toBe(false);
+    await ledger.appendBillEvent({
+      id: "bev_1", billId: bill.id, kind: "created", reason: "Bill submitted.",
+      rateSeen: null, bpsGap: null, txHash: null, entry: "created|Bill submitted.",
+    });
+    const patched = await ledger.updateBill(bill.id, {
+      status: "watching",
+      lastRate: 1444,
+      lastDecision: "refuse",
+      lastDecisionReason: "Rate 1300 is below the minimum 1400 — refusing.",
+      fundingNeededUsdt: "3.47",
+      fundingReady: false,
+      note: "Waiting for funding.",
+    });
+    expect(patched?.status).toBe("watching");
+    expect(patched?.lastRate).toBe(1444);
+    expect(patched?.fundingReady).toBe(false);
+    await ledger.appendBillEvent({
+      id: "bev_2", billId: bill.id, kind: "refuse", reason: "Rate below minimum.",
+      rateSeen: 1300, bpsGap: -714, txHash: null, entry: "refuse|Rate below minimum.|1300",
+    });
+    const events = await ledger.listBillEvents(bill.id);
+    expect(events).toHaveLength(2);
+    expect(events[1].prevHash).toBe(events[0].hash);
+    expect(await ledger.verifyBillChain(bill.id)).toBe(true);
+    expect(await ledger.getBill("missing")).toBeNull();
+    expect((await ledger.listBills()).map((b) => b.id)).toEqual(["bill_test_1"]);
+  });
+});
+
+describe("bills (PostgresLedger, pg-mem)", () => {
+  it("round-trips a bill and its event chain", async () => {
+    const db = newDb();
+    const { Pool } = db.adapters.createPg();
+    const pool = new Pool();
+    const ledger = new PostgresLedger(pool as never);
+    await ledger.init();
+    const bill = await ledger.createBill({ ...BILL_INPUT, id: "bill_pg_1" });
+    expect(bill.status).toBe("created");
+    await ledger.appendBillEvent({
+      id: "bev_pg_1", billId: bill.id, kind: "created", reason: "Bill submitted.",
+      rateSeen: null, bpsGap: null, txHash: null, entry: "created|Bill submitted.",
+    });
+    const patched = await ledger.updateBill(bill.id, {
+      status: "converting",
+      rfqId: "rfq_1",
+      approvalTxHashes: [`0x${"a".repeat(64)}`],
+      swapTxHash: `0x${"b".repeat(64)}`,
+      forced: false,
+    });
+    expect(patched?.status).toBe("converting");
+    expect(patched?.approvalTxHashes).toEqual([`0x${"a".repeat(64)}`]);
+    expect(patched?.swapTxHash).toBe(`0x${"b".repeat(64)}`);
+    // A patch with no fields changes nothing but the timestamp.
+    expect((await ledger.updateBill(bill.id, {}))?.status).toBe("converting");
+    await ledger.appendBillEvent({
+      id: "bev_pg_2", billId: bill.id, kind: "swap", reason: "Swapped USDT to cNGN.",
+      rateSeen: 1450, bpsGap: 357, txHash: `0x${"b".repeat(64)}`, entry: "swap|Swapped USDT to cNGN.|1450",
+    });
+    expect(await ledger.verifyBillChain(bill.id)).toBe(true);
+    await pool.query(`UPDATE bill_events SET entry_text = 'swap|TAMPERED|1450' WHERE id = 'bev_pg_2'`);
+    expect(await ledger.verifyBillChain(bill.id)).toBe(false);
+    await pool.end();
+  });
+});
