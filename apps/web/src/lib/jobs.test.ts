@@ -13,6 +13,7 @@ import {
   getLedger,
   getReport,
   HireInputSchema,
+  isRealHire,
   listHires,
   progressToCreative,
   setHireStatus,
@@ -466,34 +467,42 @@ describe("creative deliveries (website / flyers / promo video)", () => {
 });
 
 describe("summarizeHires — the landing page's live numbers", () => {
+  // The default fixture is a REAL job: a mainnet customer whose $1 is
+  // already in a funded escrow. Tests that mean a test run override
+  // the wallet, the token, or the escrow/funding below.
   const hire = (over: Partial<HireResult>): HireResult =>
     ({
       id: "ord_test",
       jobType: "market-report",
       description: "test",
-      customerWallet: "0x0000000000000000000000000000000000000001",
+      customerWallet: "0x1111111111111111111111111111111111111111",
       status: "in-progress",
       priceUsdc: 1,
       bondUsdc: 0,
+      payCurrency: "USDT",
+      priceAtomic: "1000000",
+      priceRate: null,
+      tokenAddress: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+      vaultAddress: "0x1C2b2E64527B0bA7795ed3CDF7d76da51D24018B",
       cfoAccepted: true,
       cfoReason: "",
       decisionHash: "",
       createdAt: "2026-11-23T11:00:00.000Z",
-      escrowAddress: null,
-      fundTxHash: null,
+      escrowAddress: "0x9c2ca8e46e44017226393b2d20ce69ef0234448e",
+      fundTxHash: "0x48c02989f12d6bd82f76e5f5a1caa3a7e3fec16a9d67f3c6ad53dc297f7c0d6f",
       deliverableTxHash: null,
       settleTxHash: null,
-      escrowState: null,
+      escrowState: "funded",
       ...over,
     }) as HireResult;
 
   it("counts done and settled, and links the first finished job", () => {
     const s = summarizeHires([
-      hire({ id: "ord_a", status: "accepted", createdAt: "2026-11-23T11:00:00.000Z" }),
+      hire({ id: "ord_a", status: "accepted", createdAt: "2026-11-23T11:00:00.000Z", settleTxHash: "0x3f4551a248970d882a3a569ca98bfc379dc44d030debbfec85fdc28273d08a22", escrowState: "accepted" }),
       hire({ id: "ord_b", status: "delivered", customerWallet: "0x0000000000000000000000000000000000000002", createdAt: "2026-11-23T12:00:00.000Z" }),
       hire({ id: "ord_c", status: "in-progress" }),
     ]);
-    expect(s).toEqual({ jobs: 3, done: 2, settled: 1, customers: 2, firstDoneJobId: "ord_a" });
+    expect(s).toEqual({ jobs: 3, done: 2, settled: 1, customers: 2, firstDoneJobId: "ord_a", excludedTestJobs: 0 });
   });
 
   it("is all zeros with no finished job", () => {
@@ -503,6 +512,83 @@ describe("summarizeHires — the landing page's live numbers", () => {
       settled: 0,
       customers: 0,
       firstDoneJobId: null,
+      excludedTestJobs: 0,
     });
+  });
+
+  it("excludes the three known test runs and keeps Amaka's real job", () => {
+    const s = summarizeHires([
+      // FortyTwo key test — delivered, never funded, dummy wallet.
+      hire({ id: "ord_mwsc5dbd_7d9s76", status: "delivered", customerWallet: "0x0000000000000000000000000000000000000001", escrowAddress: null, fundTxHash: null, tokenAddress: "", vaultAddress: "", escrowState: null }),
+      // Sepolia end-to-end — accepted on testnet, test wallet, no funding recorded on the live row.
+      hire({ id: "ord_mwssqak9_tsinmi", status: "accepted", customerWallet: "0x94CcF19e6e12B64272D3b4946Dc34a9Ae9B74C50", escrowAddress: null, fundTxHash: null, tokenAddress: "", vaultAddress: "", escrowState: null }),
+      // Speed-fix test — delivered, never funded, dummy wallet.
+      hire({ id: "ord_mwsufnqe_urs8v7", status: "delivered", customerWallet: "0x0000000000000000000000000000000000000001", escrowAddress: null, fundTxHash: null, tokenAddress: "", vaultAddress: "", escrowState: null }),
+      // Amaka — the real job: mainnet, funded escrow, accepted.
+      hire({ id: "ord_mwt6lzin_6ou3oj", status: "accepted", customerWallet: "0xcc4BCDD595Ee20cFB8A214Dc570eCB3Fb1C1d3A1", settleTxHash: "0x3f4551a248970d882a3a569ca98bfc379dc44d030debbfec85fdc28273d08a22", escrowState: "accepted", createdAt: "2026-11-23T11:27:48.000Z" }),
+    ]);
+    expect(s).toEqual({ jobs: 1, done: 1, settled: 1, customers: 1, firstDoneJobId: "ord_mwt6lzin_6ou3oj", excludedTestJobs: 3 });
+  });
+
+  it("excludes a future Sepolia job automatically, even funded", () => {
+    // A test run that DID go through the live fund flow on Sepolia: its
+    // escrow is funded, but its token is Sepolia test USDC, not mainnet.
+    const s = summarizeHires([
+      hire({
+        id: "ord_sepolia_next",
+        status: "accepted",
+        customerWallet: "0x2222222222222222222222222222222222222222",
+        tokenAddress: "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+        vaultAddress: "0x1A6d11A97e83f563bdA7811413097212362e0EcD",
+        settleTxHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        escrowState: "accepted",
+      }),
+    ]);
+    expect(s).toEqual({ jobs: 0, done: 0, settled: 0, customers: 0, firstDoneJobId: null, excludedTestJobs: 1 });
+  });
+
+  it("excludes a mainnet job funded from a test wallet", () => {
+    const s = summarizeHires([
+      hire({
+        id: "ord_agent_test",
+        status: "accepted",
+        customerWallet: "0x61aD7AEAC0B94C91B4681d1D8624d82d5DaF4Fc0",
+        settleTxHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        escrowState: "accepted",
+      }),
+    ]);
+    expect(s).toEqual({ jobs: 0, done: 0, settled: 0, customers: 0, firstDoneJobId: null, excludedTestJobs: 1 });
+  });
+
+  it("includes a future mainnet funded job", () => {
+    const s = summarizeHires([
+      hire({
+        id: "ord_real_next",
+        status: "accepted",
+        customerWallet: "0x3333333333333333333333333333333333333333",
+        settleTxHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        escrowState: "accepted",
+      }),
+    ]);
+    expect(s).toEqual({ jobs: 1, done: 1, settled: 1, customers: 1, firstDoneJobId: "ord_real_next", excludedTestJobs: 0 });
+  });
+
+  it("excludes a real customer's job until its escrow is funded", () => {
+    const s = summarizeHires([
+      hire({ id: "ord_unfunded", status: "escrowed", fundTxHash: null, escrowState: "unfunded" }),
+    ]);
+    expect(s).toEqual({ jobs: 0, done: 0, settled: 0, customers: 0, firstDoneJobId: null, excludedTestJobs: 1 });
+  });
+
+  it("isRealHire: needs a funded escrow, a real wallet, and a mainnet token", () => {
+    const real = hire({ status: "accepted" });
+    expect(isRealHire(real)).toBe(true);
+    expect(isRealHire({ ...real, fundTxHash: null })).toBe(false);
+    expect(isRealHire({ ...real, escrowAddress: null })).toBe(false);
+    expect(isRealHire({ ...real, customerWallet: "0x94CcF19e6e12B64272D3b4946Dc34a9Ae9B74C50" })).toBe(false);
+    expect(isRealHire({ ...real, tokenAddress: "0x01C5C0122039549AD1493B8220cABEdD739BC44E" })).toBe(false);
+    // Old rows store no token — the escrow and funding checks prove those.
+    expect(isRealHire({ ...real, tokenAddress: "" })).toBe(true);
+    expect(isRealHire({ ...real, tokenAddress: null })).toBe(true);
   });
 });

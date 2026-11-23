@@ -23,13 +23,14 @@ export async function GET() {
     }
   }
   const hires = await listHires();
+  const summary = summarizeHires(hires);
   return NextResponse.json({
     mode: ledgerBackend() === "postgres" ? "live" : "demo",
     backend: ledgerBackend(),
     verify: { ok: allOk, ordersChecked: orders.length, entries: decisions.length },
-    jobs: hires.length,
-    summary: summarizeHires(hires),
+    jobs: summary.jobs,
+    summary,
     decisions,
-    note: "Decisions are hash-chained (sha256). Signatures are not yet real — the CFO signing key is a Step 3 item.",
+    note: "Decisions are hash-chained (sha256). Signatures are not yet real — the CFO signing key is a Step 3 item. The headline counts cover real jobs only: test runs we did while building are left out of the totals, but they stay in the signed log below.",
   });
 }

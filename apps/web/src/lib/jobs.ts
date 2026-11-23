@@ -50,6 +50,60 @@ export type PayCurrency = "USDT" | "USDC" | "cNGN";
 /** Celo mainnet cNGN (6 decimals) — the token a cNGN job's escrow holds. */
 export const CNGN_TOKEN_ADDRESS = TEXTILE_CELO_TOKENS.cNGN as string;
 
+/**
+ * Wallets that only ever belong to test runs: the Sepolia test wallet,
+ * the agent wallet itself, and the 0x…0001 placeholder the live API
+ * tests used as a dummy customer. No real customer can pay from these —
+ * the first two are ours, and the third is an address nobody holds the
+ * key for (address 1, a precompile).
+ */
+export const KNOWN_TEST_WALLETS: ReadonlySet<string> = new Set(
+  [
+    "0x94CcF19e6e12B64272D3b4946Dc34a9Ae9B74C50", // Sepolia test wallet
+    IKENGA_AGENT_WALLET,
+    "0x0000000000000000000000000000000000000001", // dummy customer in live API tests
+  ].map((a) => a.toLowerCase()),
+);
+
+/** Celo mainnet tokens a real job can be paid in. A job whose stored
+ * token is not one of these ran on another chain (Sepolia test USDC) —
+ * a test run, even if its escrow was funded there. */
+const MAINNET_JOB_TOKENS: ReadonlySet<string> = new Set(
+  [celoDeploy.token.USDT, CNGN_TOKEN_ADDRESS].map((a) => a.toLowerCase()),
+);
+
+/**
+ * Is this a real job — one a real customer paid for on Celo mainnet?
+ * A test run fails at least one of these:
+ * - it never had a funded escrow (the funding hash is only recorded
+ *   after the server checks the payment onchain, so it proves real money);
+ * - its customer wallet is one of ours (Sepolia test wallet, agent
+ *   wallet, or the dummy placeholder from the live API tests);
+ * - its stored token is not a Celo mainnet token (Sepolia test USDC).
+ * Old rows store no token, so an empty token never excludes on its own
+ * — the escrow and funding checks already prove those. The full log
+ * keeps every job either way; this only decides what the headline
+ * counts show. No job IDs are hardcoded here, so the next test run is
+ * excluded by the same rule.
+ */
+export function isRealHire(h: {
+  customerWallet: string;
+  escrowAddress?: string | null;
+  fundTxHash?: string | null;
+  tokenAddress?: string | null;
+}): boolean {
+  if (!h.escrowAddress || !h.fundTxHash) return false;
+  if (KNOWN_TEST_WALLETS.has(h.customerWallet.toLowerCase())) return false;
+  const token = (h.tokenAddress ?? "").toLowerCase();
+  if (token && !MAINNET_JOB_TOKENS.has(token)) return false;
+  return true;
+}
+
+/** Only the real jobs — test runs stay in the log, out of the totals. */
+export function realHires(hires: HireResult[]): HireResult[] {
+  return hires.filter(isRealHire);
+}
+
 /** Plain-words label for what the team is doing right now, for any job type. */
 export function deliveryStageLabel(jobType: JobType, stage: number): string {
   return jobType === "market-report" ? reportStageLabel(stage) : creativeStageLabel(stage, jobType as CreativeJobType);
@@ -340,10 +394,12 @@ export async function listHires(): Promise<HireResult[]> {
 }
 
 /**
- * The landing page's real-work numbers, from the hires themselves.
- * Done means delivered or accepted; settled means accepted (the $1 is
- * in the vault). firstDoneJobId is the first finished job's page, so
- * the landing can link to a real job instead of inventing one.
+ * The landing page's real-work numbers, from the hires themselves —
+ * real jobs only. Test runs we did while building are left out of the
+ * totals (see isRealHire); they stay in the signed log. Done means
+ * delivered or accepted; settled means accepted (the $1 is in the
+ * vault). firstDoneJobId is the first finished job's page, so the
+ * landing can link to a real job instead of inventing one.
  */
 export function summarizeHires(hires: HireResult[]): {
   jobs: number;
@@ -352,15 +408,19 @@ export function summarizeHires(hires: HireResult[]): {
   /** Distinct paying wallets among finished jobs. */
   customers: number;
   firstDoneJobId: string | null;
+  /** Test runs left out of the totals above — they stay in the log. */
+  excludedTestJobs: number;
 } {
-  const done = hires.filter((h) => h.status === "delivered" || h.status === "accepted");
+  const real = realHires(hires);
+  const done = real.filter((h) => h.status === "delivered" || h.status === "accepted");
   const firstDone = [...done].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
   return {
-    jobs: hires.length,
+    jobs: real.length,
     done: done.length,
-    settled: hires.filter((h) => h.status === "accepted").length,
+    settled: real.filter((h) => h.status === "accepted").length,
     customers: new Set(done.map((h) => h.customerWallet.toLowerCase())).size,
     firstDoneJobId: firstDone ? firstDone.id : null,
+    excludedTestJobs: hires.length - real.length,
   };
 }
 

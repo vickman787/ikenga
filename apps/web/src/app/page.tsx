@@ -466,6 +466,11 @@ export default function Home() {
                   <div><b>{live.customers ?? 0}</b><span>businesses served</span></div>
                   <div><b>{live.settled ?? 0}</b><span>payments settled on Celo</span></div>
                 </div>
+                <p style={{ marginTop: 12, color: "var(--muted)", fontSize: 14, lineHeight: 1.6 }}>
+                  These counts cover real jobs only — the test runs we did
+                  while building are left out of the totals, but they stay
+                  in the signed log below.
+                </p>
                 <div className="rw-cta">
                   <a href="#hire" className="pill dark">
                     {(live.done ?? 0) > 0 ? "Hire the team" : "Be the first job"} <span className="pill__ic">→</span>
@@ -707,7 +712,7 @@ export default function Home() {
                     Celo. Ikenga only gets paid when you accept. Say no and
                     you get it back, <b>plus a bond the CFO put up</b>.
                   </p>
-                  <p className="mono mf-stat"><span className="dot" /> 0 jobs done so far</p>
+                  <p className="mono mf-stat"><span className="dot" /> {live.done ?? 0} job{(live.done ?? 0) === 1 ? "" : "s"} done so far</p>
                 </div>
               </div>
               <div className="card money-step">
@@ -777,7 +782,11 @@ export default function Home() {
                     the CFO, and its fingerprint rides on the vault
                     transaction. Anyone can read the log and check it.
                   </p>
-                  <p className="mono mf-stat">No entries yet · checks out ✓</p>
+                  <p className="mono mf-stat">
+                    {live.decisions === null
+                      ? "Checking the log…"
+                      : `${live.decisions} entries · ${live.verifyOk ? "checks out ✓" : "log does not check out"}`}
+                  </p>
                 </div>
               </div>
             </div>
