@@ -9,7 +9,8 @@
  * CELO_RPC_URL / CELO_SEPOLIA_RPC_URL (Ankr defaults); which chain is
  * picked by IKENGA_CHAIN ("mainnet" default, "sepolia" for tests).
  */
-import { createPublicClient, erc20Abi, http, parseAbi, type Address, type Hex, type PublicClient } from "viem";
+import { createPublicClient, decodeFunctionData, erc20Abi, http, parseAbi, type Address, type Hex, type PublicClient } from "viem";
+import { stripAttribution } from "./attribution.js";
 
 export const CELO_MAINNET_RPC_URL = "https://rpc.ankr.com/celo";
 export const CELO_SEPOLIA_RPC_URL_DEFAULT = "https://rpc.ankr.com/celo_sepolia";
@@ -43,6 +44,7 @@ const ESCROW_ABI = parseAbi([
   "function ikengaVault() view returns (address)",
   "function token() view returns (address)",
   "function state() view returns (uint8)",
+  "function price() view returns (uint256)",
   "function deliverableHash() view returns (bytes32)",
 ]);
 
@@ -57,6 +59,8 @@ export interface EscrowOnchain {
   token: Address | null;
   /** 0 UNFUNDED, 1 FUNDED, 2 ACCEPTED, 3 REJECTED, 4 RELEASED. Null when no contract. */
   state: number | null;
+  /** The price fixed at deploy, in the token's atomic units. Null when no contract. */
+  price: bigint | null;
   /** Token balance the escrow holds, in atomic units. Null when it can't be read. */
   tokenBalance: bigint | null;
 }
@@ -80,7 +84,7 @@ export async function readEscrowOnchain(escrowAddress: string, opts?: EscrowRead
   const client = opts?.client ?? createEscrowClient({ rpcUrl: opts?.rpcUrl });
   const code = await client.getCode({ address });
   if (!code || code === "0x") {
-    return { exists: false, customer: null, vault: null, token: null, state: null, tokenBalance: null };
+    return { exists: false, customer: null, vault: null, token: null, state: null, price: null, tokenBalance: null };
   }
   const [customer, vault, token, state] = await Promise.all([
     client.readContract({ address, abi: ESCROW_ABI, functionName: "customer" }),
@@ -88,6 +92,16 @@ export async function readEscrowOnchain(escrowAddress: string, opts?: EscrowRead
     client.readContract({ address, abi: ESCROW_ABI, functionName: "token" }),
     client.readContract({ address, abi: ESCROW_ABI, functionName: "state" }),
   ]);
+  // price() exists only on escrows deployed after the cNGN change
+  // (2026-11-23). Older escrows — including the live $1 job's — revert
+  // here; their price is the old constant 1,000,000, reported as null
+  // so callers that need it can fall back to the job record.
+  let price: bigint | null = null;
+  try {
+    price = await client.readContract({ address, abi: ESCROW_ABI, functionName: "price" });
+  } catch {
+    price = null;
+  }
   let tokenBalance: bigint | null = null;
   try {
     tokenBalance = await client.readContract({
@@ -101,7 +115,7 @@ export async function readEscrowOnchain(escrowAddress: string, opts?: EscrowRead
     // the caller (fund) treats that as "not proven funded".
     tokenBalance = null;
   }
-  return { exists: true, customer, vault, token, state: Number(state), tokenBalance };
+  return { exists: true, customer, vault, token, state: Number(state), price, tokenBalance };
 }
 
 /**
@@ -133,6 +147,102 @@ export interface TxReceiptCheck {
   from: Address | null;
   /** The contract the transaction called. Null when there is no receipt (or it created a contract). */
   to: Address | null;
+}
+
+export interface FundingTransferCheck {
+  /** True only when the transaction is a successful USDT transfer of exactly the expected amount to the expected recipient, from the expected payer. */
+  ok: boolean;
+  /** Plain-words reason when not ok — "not onchain yet", "reverted", "wrong token", "wrong payer", "wrong recipient", "wrong amount", "not a transfer", or "could not read the transaction". */
+  reason: string | null;
+  /** Who sent the transaction. Null when it can't be read. */
+  from: Address | null;
+  /** The contract the transaction called. Null when it can't be read. */
+  to: Address | null;
+  /** The transfer() recipient. Null when the input isn't a transfer. */
+  recipient: Address | null;
+  /** The transfer() amount, in atomic units. Null when the input isn't a transfer. */
+  amountAtomic: bigint | null;
+}
+
+/**
+ * Verify a bill-funding payment onchain: a successful USDT transfer
+ * from the payer's wallet to the agent wallet, for exactly the amount
+ * the payer said they paid.
+ *
+ * The funding transfer carries Ikenga's attribution tag (the browser
+ * tags it like every other customer transaction), so the tag suffix is
+ * stripped before the input is decoded — a tagged transfer decodes to
+ * the exact transfer(to, amount) underneath, and an untagged manual
+ * transfer decodes the same way.
+ *
+ * A transaction that isn't onchain yet, or that reverted, is reported
+ * as not-ok, never thrown — the caller turns it into a plain-words
+ * 400. An RPC that can't be reached still throws, so the caller can
+ * answer 502 instead.
+ */
+export async function verifyFundingTransfer(
+  txHash: string,
+  expected: { token: string; from: string; recipient: string; amountAtomic: bigint },
+  opts?: EscrowReadOptions,
+): Promise<FundingTransferCheck> {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+    throw new Error("That transaction hash doesn't look right — it should start with 0x and be 66 characters.");
+  }
+  const client = opts?.client ?? createEscrowClient({ rpcUrl: opts?.rpcUrl });
+  let receipt;
+  try {
+    receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+  } catch (err) {
+    // viem throws TransactionNotFoundError when the receipt isn't there yet.
+    if (err instanceof Error && /not found/i.test(err.message)) {
+      return { ok: false, reason: "not onchain yet", from: null, to: null, recipient: null, amountAtomic: null };
+    }
+    throw err;
+  }
+  if (!receipt) {
+    return { ok: false, reason: "not onchain yet", from: null, to: null, recipient: null, amountAtomic: null };
+  }
+  if (receipt.status !== "success") {
+    return { ok: false, reason: "reverted", from: receipt.from, to: receipt.to, recipient: null, amountAtomic: null };
+  }
+  if (receipt.to?.toLowerCase() !== expected.token.toLowerCase()) {
+    return { ok: false, reason: "wrong token", from: receipt.from, to: receipt.to, recipient: null, amountAtomic: null };
+  }
+  if (receipt.from.toLowerCase() !== expected.from.toLowerCase()) {
+    return { ok: false, reason: "wrong payer", from: receipt.from, to: receipt.to, recipient: null, amountAtomic: null };
+  }
+  let tx;
+  try {
+    tx = await client.getTransaction({ hash: txHash as `0x${string}` });
+  } catch (err) {
+    if (err instanceof Error && /not found/i.test(err.message)) {
+      return { ok: false, reason: "not onchain yet", from: receipt.from, to: receipt.to, recipient: null, amountAtomic: null };
+    }
+    throw err;
+  }
+  if (!tx) {
+    return { ok: false, reason: "not onchain yet", from: receipt.from, to: receipt.to, recipient: null, amountAtomic: null };
+  }
+  let decoded;
+  try {
+    decoded = decodeFunctionData({
+      abi: erc20Abi,
+      data: stripAttribution(tx.input as Hex),
+    });
+  } catch {
+    return { ok: false, reason: "not a transfer", from: receipt.from, to: receipt.to, recipient: null, amountAtomic: null };
+  }
+  if (decoded.functionName !== "transfer") {
+    return { ok: false, reason: "not a transfer", from: receipt.from, to: receipt.to, recipient: null, amountAtomic: null };
+  }
+  const [recipient, amountAtomic] = decoded.args as [Address, bigint];
+  if (recipient.toLowerCase() !== expected.recipient.toLowerCase()) {
+    return { ok: false, reason: "wrong recipient", from: receipt.from, to: receipt.to, recipient, amountAtomic };
+  }
+  if (amountAtomic !== expected.amountAtomic) {
+    return { ok: false, reason: "wrong amount", from: receipt.from, to: receipt.to, recipient, amountAtomic };
+  }
+  return { ok: true, reason: null, from: receipt.from, to: receipt.to, recipient, amountAtomic };
 }
 
 /**

@@ -98,6 +98,18 @@ export function parseAttribution(data: Hex): DecodedSuffix | null {
 }
 
 /**
+ * The calldata with the attribution suffix removed — the call itself,
+ * exactly as it was before tagging. Returns the data unchanged when it
+ * carries no tag. A tagged USDT transfer strips back to the exact
+ * transfer(to, amount) call, so the payment can be verified against
+ * what was meant to be sent.
+ */
+export function stripAttribution(data: Hex): Hex {
+  const split = splitSuffix(data);
+  return split ? split.body : data;
+}
+
+/**
  * Resolve the attribution tag: an explicit value wins, otherwise env
  * IKENGA_ATTRIBUTION_TAG. Throws when absent or malformed — a missing tag
  * must fail loudly, never fall back to an invented code or an untagged tx.

@@ -222,6 +222,59 @@ describe("PostgresLedger (pg-mem)", () => {
     await pool.end();
   });
 
+  it("round-trips the payment currency and fixed price through Postgres", async () => {
+    const db = newDb();
+    const { Pool } = db.adapters.createPg();
+    const pool = new Pool();
+    const ledger = new PostgresLedger(pool as never);
+    await ledger.init();
+    await ledger.createOrder({
+      id: "ord_pg_cngn",
+      jobType: "market-report",
+      customerWallet: "0x0000000000000000000000000000000000000002",
+      description: "Report",
+      status: "draft",
+      payCurrency: "cNGN",
+      priceAtomic: "1445000000",
+      priceRate: "1444.067",
+      tokenAddress: "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f",
+      vaultAddress: "0x00000000000000000000000000000000000000c1",
+    });
+    const back = await ledger.getOrder("ord_pg_cngn");
+    expect(back?.payCurrency).toBe("cNGN");
+    expect(back?.priceAtomic).toBe("1445000000");
+    expect(back?.priceRate).toBe("1444.067");
+    expect(back?.tokenAddress).toBe("0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f");
+    expect(back?.vaultAddress).toBe("0x00000000000000000000000000000000000000c1");
+    // An old row without the fields defaults to a $1 USDT job.
+    await ledger.createOrder({
+      id: "ord_pg_usdt",
+      jobType: "website",
+      customerWallet: "0x0000000000000000000000000000000000000002",
+      description: "Website",
+      status: "draft",
+    });
+    const old = await ledger.getOrder("ord_pg_usdt");
+    expect(old?.payCurrency).toBe("USDT");
+    expect(old?.priceAtomic).toBe("1000000");
+    // A decision records which currency the money was in.
+    await ledger.appendDecision({
+      id: "dec_pg_cngn",
+      orderId: "ord_pg_cngn",
+      kind: "escrow",
+      reason: "Customer paid 1,445 cNGN into escrow.",
+      amountMicroUsdc: 1_000_000,
+      currency: "cNGN",
+      signature: "0xikenga-step2",
+      entry: "escrow|cNGN|Customer paid 1,445 cNGN into escrow.|1000000",
+    });
+    const decisions = await ledger.listDecisions("ord_pg_cngn");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]?.currency).toBe("cNGN");
+    expect(await ledger.verifyOrderChain("ord_pg_cngn")).toBe(true);
+    await pool.end();
+  });
+
   it("stores entry_text and detects a tampered decision", async () => {
     const db = newDb();
     const { Pool } = db.adapters.createPg();
@@ -293,6 +346,9 @@ describe("bills (MemoryLedger)", () => {
     const bill = await ledger.createBill(BILL_INPUT);
     expect(bill.status).toBe("created");
     expect(bill.approvalTxHashes).toEqual([]);
+    expect(bill.fundingPayerWallet).toBeNull();
+    expect(bill.fundingTxHashes).toEqual([]);
+    expect(bill.fundingPaidUsdtAtomic).toBeNull();
     expect(bill.forced).toBe(false);
     await ledger.appendBillEvent({
       id: "bev_1", billId: bill.id, kind: "created", reason: "Bill submitted.",
@@ -310,6 +366,15 @@ describe("bills (MemoryLedger)", () => {
     expect(patched?.status).toBe("watching");
     expect(patched?.lastRate).toBe(1444);
     expect(patched?.fundingReady).toBe(false);
+    // Funding fields round-trip: the friend's verified payment, attributed to this bill only.
+    const funded = await ledger.updateBill(bill.id, {
+      fundingPayerWallet: "0x00000000000000000000000000000000000000aa",
+      fundingTxHashes: [`0x${"f".repeat(64)}`],
+      fundingPaidUsdtAtomic: "3462600",
+    });
+    expect(funded?.fundingPayerWallet).toBe("0x00000000000000000000000000000000000000aa");
+    expect(funded?.fundingTxHashes).toEqual([`0x${"f".repeat(64)}`]);
+    expect(funded?.fundingPaidUsdtAtomic).toBe("3462600");
     await ledger.appendBillEvent({
       id: "bev_2", billId: bill.id, kind: "refuse", reason: "Rate below minimum.",
       rateSeen: 1300, bpsGap: -714, txHash: null, entry: "refuse|Rate below minimum.|1300",

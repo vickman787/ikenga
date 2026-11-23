@@ -13,8 +13,16 @@
  *      rate is what the bill actually costs, fee included
  *      (buyAmount / takerPays) — never the headline rate before fees.
  *   3. The agent wallet must already hold that USDT, plus a little CELO
- *      for gas. Short of it, the bill waits and the page says exactly
- *      how much USDT is needed. Nothing is borrowed, nothing is promised.
+ *      for gas — and the USDT must be THIS bill's own verified funding.
+ *      A bill is funded by its recorded funding transfers (payer wallet
+ *      + tx hash + amount), never by "the wallet has enough USDT", so two
+ *      bills can never claim the same payment. Short of it, the bill
+ *      waits and the page says exactly how much USDT is needed — or how
+ *      much more, when the friend already paid part of it. If the rate
+ *      moved since they paid and the swap now needs more, the bill waits
+ *      for the difference; if it needs less, the swap goes ahead and the
+ *      extra stays in the agent wallet. Nothing is borrowed, nothing is
+ *      promised.
  *   4. Below the minimum rate and before the deadline, the worker
  *      refuses (decideFx) and writes a receipt for what waiting saved.
  *      A refusal is recorded once, not every run.
@@ -134,6 +142,12 @@ export interface SiteBill {
   lastDecision: BillDecision | null;
   fundingNeededUsdt: string | null;
   fundingReady: boolean | null;
+  /** The wallet that paid for this bill — the friend's own wallet. */
+  fundingPayerWallet: string | null;
+  /** Verified funding transfers for this bill. A hash is recorded on one bill only. */
+  fundingTxHashes: string[];
+  /** Total USDT paid for this bill across its verified funding transfers, in atomic units. */
+  fundingPaidUsdtAtomic: string | null;
   rfqId: string | null;
   approvalTxHashes: string[];
   swapTxHash: string | null;
@@ -266,7 +280,15 @@ async function processOneBill(
   const rate = quoteRate(preview.buyAmount, preview.takerPays);
   const neededUsdt = formatUsdtAtomic(preview.takerPays);
 
-  // 4. Funding: the agent wallet must already hold the USDT, plus a little CELO for gas.
+  // 4. Funding: this bill's own verified funding must cover the swap,
+  // and the agent wallet must still hold that USDT, plus a little CELO
+  // for gas. A bill is funded by ITS OWN recorded funding transfers —
+  // never by "the wallet has enough USDT" — so two bills can never
+  // claim the same payment. If the rate moved since the friend paid and
+  // the swap now needs more, the bill waits and the page says the
+  // shortfall; if it needs less, the swap goes ahead.
+  const neededAtomic = BigInt(preview.takerPays);
+  const paidAtomic = bill.fundingPaidUsdtAtomic ? BigInt(bill.fundingPaidUsdtAtomic) : 0n;
   let usdt: bigint;
   let celo: bigint;
   try {
@@ -275,7 +297,8 @@ async function processOneBill(
     rt.log(`bill ${bill.id}: could not check the agent wallet balance — leaving it for the next run. (${err instanceof Error ? err.message : "unknown error"})`);
     return { actionsUsed: 0, outcome: "waiting" };
   }
-  if (usdt < BigInt(preview.takerPays)) {
+  if (paidAtomic < neededAtomic) {
+    const shortfall = formatUsdtAtomic((neededAtomic - paidAtomic).toString());
     await rt.updateBill(bill.id, {
       patch: {
         status: "watching",
@@ -284,7 +307,24 @@ async function processOneBill(
         lastRateAt: now,
         fundingNeededUsdt: neededUsdt,
         fundingReady: false,
-        note: `To pay this bill we need about $${Number(neededUsdt).toFixed(2)} USDT in the agent wallet. Nothing has moved yet.`,
+        note:
+          paidAtomic === 0n
+            ? `To pay this bill we need about $${Number(neededUsdt).toFixed(2)} USDT from your own wallet. Nothing has moved yet.`
+            : `You paid $${Number(formatUsdtAtomic(paidAtomic.toString())).toFixed(2)} USDT — we need $${Number(shortfall).toFixed(2)} more for this bill at the rate right now. Nothing has moved yet.`,
+      },
+    });
+    return { actionsUsed: 0, outcome: "waiting" };
+  }
+  if (usdt < neededAtomic) {
+    await rt.updateBill(bill.id, {
+      patch: {
+        status: "watching",
+        lastCheckedAt: now,
+        lastRate: rate,
+        lastRateAt: now,
+        fundingNeededUsdt: neededUsdt,
+        fundingReady: false,
+        note: "Your payment for this bill is recorded, but the agent wallet no longer holds enough USDT to pay it — nothing can move until it does.",
       },
     });
     return { actionsUsed: 0, outcome: "waiting" };

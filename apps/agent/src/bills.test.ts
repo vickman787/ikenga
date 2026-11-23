@@ -61,6 +61,9 @@ function fakeBill(overrides: Partial<SiteBill> = {}): SiteBill {
     lastDecision: null,
     fundingNeededUsdt: null,
     fundingReady: null,
+    fundingPayerWallet: null,
+    fundingTxHashes: [],
+    fundingPaidUsdtAtomic: null,
     rfqId: null,
     approvalTxHashes: [],
     swapTxHash: null,
@@ -68,6 +71,16 @@ function fakeBill(overrides: Partial<SiteBill> = {}): SiteBill {
     payoutTxHash: null,
     ...overrides,
   };
+}
+
+/** A bill whose friend already paid the default preview's need (3,462,600 atomic USDT). */
+function fundedBill(overrides: Partial<SiteBill> = {}): SiteBill {
+  return fakeBill({
+    fundingPayerWallet: "0x00000000000000000000000000000000000000aa",
+    fundingTxHashes: [`0x${"f".repeat(64)}`],
+    fundingPaidUsdtAtomic: "3462600",
+    ...overrides,
+  });
 }
 
 interface FakeState {
@@ -170,7 +183,7 @@ describe("payout calldata + tag", () => {
     // Stripping the tag leaves the exact transfer call — the tag changes nothing about the payment.
     const untagged = payoutCalldata(SUPPLIER, "5000000000");
     expect(tagged.startsWith(untagged)).toBe(true);
-    const decoded = decodeFunctionData({ abi: transferAbi, data: untagged, functionName: "transfer" });
+    const decoded = decodeFunctionData({ abi: transferAbi, data: untagged });
     expect(decoded.args[0]?.toLowerCase()).toBe(SUPPLIER.toLowerCase());
     expect(decoded.args[1]).toBe(5000000000n);
   });
@@ -191,9 +204,9 @@ describe("makeBillSendFn — the tagging split", () => {
   });
 });
 
-describe("processBills", () => {
-  it("waits for funding when the agent wallet is short, and never asks for a firm quote", async () => {
-    const { rt, state } = fakeRuntime({ usdt: 1_000_000n });
+describe("processBills — funding is per bill, never 'the wallet has enough'", () => {
+  it("waits for funding when the bill has no verified funding, even when the wallet holds plenty of USDT, and never asks for a firm quote", async () => {
+    const { rt, state } = fakeRuntime();
     const res = await processBills([fakeBill()], rt, 10);
     expect(res.waiting).toBe(1);
     expect(res.converted).toBe(0);
@@ -206,32 +219,78 @@ describe("processBills", () => {
     expect(String(patch.note)).toContain("$3.46");
   });
 
+  it("two bills can't claim one funding: the funded bill converts, the unfunded one waits", async () => {
+    const { rt, state } = fakeRuntime();
+    const funded = fundedBill({ id: "bill_funded" });
+    const unfunded = fakeBill({ id: "bill_unfunded" });
+    const res = await processBills([funded, unfunded], rt, 10);
+    expect(res.paid).toBe(1);
+    expect(res.waiting).toBe(1);
+    expect(state.firmQuotes).toBe(1);
+    // Only the funded bill's swap went through.
+    expect(state.raw).toHaveLength(1);
+    const waitingPatch = state.updates.find((u) => u.id === "bill_unfunded")?.update.patch as Record<string, unknown>;
+    expect(waitingPatch.fundingReady).toBe(false);
+  });
+
+  it("waits when the friend paid but the rate moved and the swap now needs more — and says the shortfall", async () => {
+    const { rt, state } = fakeRuntime({
+      previewRate: { buyAmount: "5000000000", takerPays: "4000000" }, // needs $4.00, paid $3.4626
+    });
+    const res = await processBills([fundedBill()], rt, 10);
+    expect(res.waiting).toBe(1);
+    expect(state.firmQuotes).toBe(0);
+    const patch = state.updates[0].update.patch as Record<string, unknown>;
+    expect(patch.fundingReady).toBe(false);
+    expect(String(patch.note)).toContain("$0.54 more");
+  });
+
+  it("converts when the rate moved in the friend's favour and the paid amount still covers the swap", async () => {
+    const { rt } = fakeRuntime({
+      previewRate: { buyAmount: "5000000000", takerPays: "3000000" }, // needs $3.00, paid $3.4626
+    });
+    const res = await processBills([fundedBill()], rt, 10);
+    expect(res.paid).toBe(1);
+  });
+
+  it("waits when the funding is recorded but the wallet no longer holds the USDT", async () => {
+    const { rt, state } = fakeRuntime({ usdt: 1_000_000n });
+    const res = await processBills([fundedBill()], rt, 10);
+    expect(res.waiting).toBe(1);
+    expect(state.firmQuotes).toBe(0);
+    const patch = state.updates[0].update.patch as Record<string, unknown>;
+    expect(patch.fundingReady).toBe(false);
+    expect(String(patch.note)).toContain("no longer holds enough USDT");
+  });
+
   it("waits for gas when the wallet holds USDT but no CELO", async () => {
     const { rt, state } = fakeRuntime({ celo: 0n });
-    const res = await processBills([fakeBill()], rt, 10);
+    const res = await processBills([fundedBill()], rt, 10);
     expect(res.waiting).toBe(1);
     expect(state.firmQuotes).toBe(0);
     expect(String((state.updates[0].update.patch as Record<string, unknown>).note)).toContain("no CELO for gas");
   });
+});
 
+describe("processBills", () => {
   it("refuses below the minimum and records the refusal only once", async () => {
     const { rt, state } = fakeRuntime({
       previewRate: { buyAmount: "5000000000", takerPays: "4000000" }, // rate 1250 < 1400
     });
-    const bill = fakeBill();
+    const bill = fundedBill({ fundingPaidUsdtAtomic: "4000000" });
     const first = await processBills([bill], rt, 10);
     expect(first.refused).toBe(1);
     expect(state.firmQuotes).toBe(0);
     expect(state.updates[0].update.event?.kind).toBe("refuse");
     // Second run, same rate: the patch updates, but no second refusal receipt.
-    const second = await processBills([fakeBill({ lastDecision: "refuse" })], rt, 10);
+    const second = await processBills([fundedBill({ lastDecision: "refuse", fundingPaidUsdtAtomic: "4000000" })], rt, 10);
     expect(second.refused).toBe(1);
     expect(state.updates.filter((u) => u.update.event?.kind === "refuse")).toHaveLength(1);
   });
 
   it("converts at a good rate: approval tagged, swap raw, payout tagged with the tag on it", async () => {
     const { rt, state } = fakeRuntime();
-    const res = await processBills([fakeBill()], rt, 10);
+    const res = await processBills([fundedBill()], rt, 10);
     expect(res.paid).toBe(1);
     expect(res.converted).toBe(0);
     // Approval went tagged, swap went raw, payout went tagged.
@@ -244,7 +303,7 @@ describe("processBills", () => {
     // The tagged payout starts with the exact transfer call.
     const untagged = payoutCalldata(SUPPLIER, "5000000000");
     expect(payout!.data.startsWith(untagged)).toBe(true);
-    const decoded = decodeFunctionData({ abi: transferAbi, data: untagged, functionName: "transfer" });
+    const decoded = decodeFunctionData({ abi: transferAbi, data: untagged });
     expect(decoded.args[0]?.toLowerCase()).toBe(SUPPLIER.toLowerCase());
     expect(decoded.args[1]).toBe(5000000000n);
     // The swap was recorded before the payout, and the bill ends paid.
@@ -259,7 +318,7 @@ describe("processBills", () => {
       previewRate: { buyAmount: "5000000000", takerPays: "4000000" },
       firmRate: { buyAmount: "5000000000", takerPays: "4000000" },
     });
-    const bill = fakeBill({ deadline: new Date(Date.now() - 1000).toISOString() });
+    const bill = fundedBill({ deadline: new Date(Date.now() - 1000).toISOString(), fundingPaidUsdtAtomic: "4000000" });
     const res = await processBills([bill], rt, 10);
     expect(res.paid).toBe(1);
     const swapUpdate = state.updates.find((u) => u.update.event?.kind === "swap");
@@ -271,7 +330,7 @@ describe("processBills", () => {
     const { rt, state } = fakeRuntime({
       firmRate: { buyAmount: "5000000000", takerPays: "4000000" }, // firm 1250 < 1400, preview was fine
     });
-    const res = await processBills([fakeBill()], rt, 10);
+    const res = await processBills([fundedBill()], rt, 10);
     expect(res.refused).toBe(1);
     expect(state.cancels).toEqual(["rfq_test_1"]);
     expect(state.raw).toHaveLength(0);
@@ -307,7 +366,7 @@ describe("processBills", () => {
     expect(state.firmQuotes).toBe(0);
 
     const failing = fakeRuntime({ swapThrows: "firm quote expired during approval" });
-    const res = await processBills([fakeBill()], failing.rt, 10);
+    const res = await processBills([fundedBill()], failing.rt, 10);
     expect(res.waiting).toBe(1);
     expect(failing.state.raw).toHaveLength(0);
     expect(failing.state.tagged).toHaveLength(0);

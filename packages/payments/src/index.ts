@@ -220,6 +220,7 @@ export {
   isAttributionTag,
   parseAttribution,
   resolveAttributionTag,
+  stripAttribution,
 } from "./attribution.js";
 export { sendTagged, type SendTaggedOptions, type SendTaggedTx, type TaggedTxClient } from "./send.js";
 export {
@@ -253,6 +254,7 @@ export {
   type VerifyPaymentResult,
 } from "./x402.js";
 export { deliverableHashFor, type DeliverableContent } from "./deliverable.js";
+export { cngnJobPrice, cngnRatePerUsd, type CngnJobPrice } from "./pricing.js";
 export {
   CELO_MAINNET_RPC_URL,
   CELO_SEPOLIA_RPC_URL_DEFAULT,
@@ -262,9 +264,11 @@ export {
   readEscrowDeliverableHash,
   readEscrowOnchain,
   readVaultOnchain,
+  verifyFundingTransfer,
   verifyTxReceipt,
   type EscrowOnchain,
   type EscrowReadOptions,
+  type FundingTransferCheck,
   type TxReceiptCheck,
   type VaultOnchain,
 } from "./escrow.js";

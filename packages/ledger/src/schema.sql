@@ -28,6 +28,15 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS escrow_address TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS fund_tx_hash TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS deliverable_tx_hash TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS settle_tx_hash TEXT;
+-- What a job is paid in: USDT on mainnet, test USDC on Sepolia, cNGN
+-- on mainnet. The price is fixed at hire time in that currency's atomic
+-- units, with the live cNGN rate recorded alongside it. Same IF NOT
+-- EXISTS pattern, so old databases pick them up on init.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS pay_currency TEXT NOT NULL DEFAULT 'USDT';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_atomic TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_rate TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS token_address TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS vault_address TEXT;
 
 CREATE TABLE IF NOT EXISTS decision_log (
   id TEXT PRIMARY KEY,
@@ -37,6 +46,10 @@ CREATE TABLE IF NOT EXISTS decision_log (
                     'fx-quote', 'fx-swap', 'fx-refuse', 'self-verify', 'self-refuse', 'x402-settle')),
   reason TEXT NOT NULL,
   amount_micro_usdc BIGINT NOT NULL DEFAULT 0,
+  -- Which currency the money in this decision is in (USDT by default).
+  -- The amount stays in micro-USDC for the CFO's $1 maths; the currency
+  -- says what the customer actually paid.
+  currency TEXT NOT NULL DEFAULT 'USDT',
   prev_hash TEXT NOT NULL,
   hash TEXT NOT NULL,
   signature TEXT NOT NULL,
@@ -49,6 +62,8 @@ CREATE TABLE IF NOT EXISTS decision_log (
 
 CREATE INDEX IF NOT EXISTS decision_log_order_idx ON decision_log (order_id, created_at);
 CREATE INDEX IF NOT EXISTS decision_log_hash_idx ON decision_log (hash);
+-- Currency of each decision's money (added with the cNGN jobs).
+ALTER TABLE decision_log ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USDT';
 
 -- Step 2: Textile FX swaps (plan §2.2). The claim token is NOT stored here:
 -- it lives in server memory for the life of the RFQ only (risk R-8).
@@ -142,6 +157,9 @@ CREATE TABLE IF NOT EXISTS bills (
   last_naira_saved BIGINT,
   funding_needed_usdt TEXT,
   funding_ready BOOLEAN,
+  funding_payer_wallet TEXT,
+  funding_tx_hashes TEXT NOT NULL DEFAULT '[]',
+  funding_paid_usdt_atomic TEXT,
   rfq_id TEXT,
   approval_tx_hashes TEXT NOT NULL DEFAULT '[]',
   swap_tx_hash TEXT,
@@ -151,13 +169,22 @@ CREATE TABLE IF NOT EXISTS bills (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Funding for a bill is paid by the friend from their own wallet, not
+-- by the user: one verified USDT transfer per funding record. A funding
+-- tx hash is recorded on one bill only, so two bills can never claim the
+-- same funding; the paid total is atomic USDT across the bill's funding
+-- transfers. Added with IF NOT EXISTS so old databases pick them up on init.
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_payer_wallet TEXT;
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_tx_hashes TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_paid_usdt_atomic TEXT;
+
 -- One hash-chained receipt per bill event — the same chaining as the CFO
 -- decision log, so a bill's history can't be rewritten silently.
 CREATE TABLE IF NOT EXISTS bill_events (
   id TEXT PRIMARY KEY,
   bill_id TEXT NOT NULL REFERENCES bills(id),
   kind TEXT NOT NULL
-    CHECK (kind IN ('created', 'quote', 'refuse', 'convert', 'swap', 'payout', 'paid', 'failed', 'waiting')),
+    CHECK (kind IN ('created', 'quote', 'refuse', 'convert', 'swap', 'payout', 'paid', 'failed', 'waiting', 'funded')),
   reason TEXT NOT NULL,
   rate_seen DOUBLE PRECISION,
   bps_gap INT,

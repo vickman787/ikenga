@@ -3,6 +3,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Nav from "@/components/Nav";
+import {
+  connectInjected,
+  ensureChain,
+  fetchChainConfig,
+  fundBillTransfer,
+  readTokenBalance,
+} from "@/lib/contracts";
+import { formatUsdtDollars, usdtDecimalToAtomic } from "@/lib/usdt";
 
 /**
  * One bill's page — where it stands, and the receipts.
@@ -33,6 +41,9 @@ interface BillDetail {
     lastNairaSaved: number | null;
     fundingNeededUsdt: string | null;
     fundingReady: boolean | null;
+    fundingPayerWallet: string | null;
+    fundingTxHashes: string[];
+    fundingPaidUsdtAtomic: string | null;
     rfqId: string | null;
     approvalTxHashes: string[];
     swapTxHash: string | null;
@@ -47,6 +58,7 @@ interface BillDetail {
 
 const EVENT_LABELS: Record<string, string> = {
   created: "Bill sent",
+  funded: "You paid for the bill",
   quote: "Rate checked",
   refuse: "Waited — rate too low",
   convert: "Rate good — changing the money",
@@ -74,28 +86,31 @@ export default function BillPage() {
   const [data, setData] = useState<BillDetail | null>(null);
   const [agentWallet, setAgentWallet] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [payStatus, setPayStatus] = useState<"idle" | "connecting" | "checking" | "paying" | "reporting" | "done">("idle");
+  const [payError, setPayError] = useState("");
+  const [manualHash, setManualHash] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
+
+  async function load() {
+    try {
+      const res = await fetch(`/api/bills/${id}`);
+      const json = (await res.json().catch(() => null)) as BillDetail & { error?: string };
+      if (!res.ok || !json.bill) {
+        setError(json.error ?? "No bill with that id.");
+        return;
+      }
+      setData(json);
+    } catch {
+      setError("Could not load the bill — check your connection and try again.");
+    }
+  }
 
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const res = await fetch(`/api/bills/${id}`);
-        const json = (await res.json().catch(() => null)) as BillDetail & { error?: string };
-        if (cancelled) return;
-        if (!res.ok || !json.bill) {
-          setError(json.error ?? "No bill with that id.");
-          return;
-        }
-        setData(json);
-      } catch {
-        if (!cancelled) setError("Could not load the bill — check your connection and try again.");
-      }
-    }
     async function loadChain() {
       try {
         const res = await fetch("/api/chain");
         const json = (await res.json().catch(() => null)) as { agentWallet?: string };
-        if (!cancelled && json.agentWallet) setAgentWallet(json.agentWallet);
+        if (json.agentWallet) setAgentWallet(json.agentWallet);
       } catch {
         // The funding address is a nice-to-have here; the bill still loads without it.
       }
@@ -104,12 +119,98 @@ export default function BillPage() {
     loadChain();
     const timer = setInterval(load, 10_000);
     return () => {
-      cancelled = true;
       clearInterval(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  /**
+   * Pay for this bill from the payer's own wallet: connect the browser
+   * extension, check they hold enough USDT, send one tagged USDT
+   * transfer to the agent wallet, then report the hash so the server
+   * can check it onchain and record the funding for this bill.
+   */
+  async function reportFunding(txHash: string, payerWallet: string, amountAtomic: bigint) {
+    const res = await fetch(`/api/bills/${id}/update`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        funding: { txHash, payerWallet, amountAtomic: amountAtomic.toString() },
+      }),
+    });
+    const json = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (!res.ok) {
+      throw new Error(json?.error ?? "The payment went through, but we couldn't record it — keep the transaction hash and tell us about it.");
+    }
+  }
+
+  async function handlePay(remainingAtomic: bigint) {
+    setPayError("");
+    setPayStatus("connecting");
+    try {
+      const chain = await fetchChainConfig();
+      const account = await connectInjected();
+      await ensureChain(chain.chainId);
+      setPayStatus("checking");
+      const balance = await readTokenBalance(chain, account);
+      if (balance < remainingAtomic) {
+        throw new Error(
+          `Your wallet holds ${formatUsdtDollars(balance.toString())} USDT — you need ${formatUsdtDollars(remainingAtomic)} for this bill. Add USDT first, then try again.`,
+        );
+      }
+      setPayStatus("paying");
+      const { txHash } = await fundBillTransfer({ account, chain, amountAtomic: remainingAtomic });
+      setPayStatus("reporting");
+      await reportFunding(txHash, account, remainingAtomic);
+      setPayStatus("done");
+      await load();
+    } catch (err) {
+      setPayStatus("idle");
+      setPayError(err instanceof Error ? err.message : "The payment didn't go through — try again.");
+    }
+  }
+
+  /** The button didn't work, so the payer sent the USDT themselves:
+   * connect the wallet that paid, paste the hash, and the server
+   * checks it onchain before recording it for this bill. */
+  async function handleManualReport(remainingAtomic: bigint) {
+    const hash = manualHash.trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+      setPayError("That transaction hash doesn't look right — it should start with 0x and be 66 characters.");
+      return;
+    }
+    setPayError("");
+    setPayStatus("connecting");
+    try {
+      const chain = await fetchChainConfig();
+      const account = await connectInjected();
+      await ensureChain(chain.chainId);
+      setPayStatus("reporting");
+      await reportFunding(hash, account, remainingAtomic);
+      setPayStatus("done");
+      setManualOpen(false);
+      setManualHash("");
+      await load();
+    } catch (err) {
+      setPayStatus("idle");
+      setPayError(err instanceof Error ? err.message : "That payment couldn't be recorded — check the hash and try again.");
+    }
+  }
+
   const bill = data?.bill;
+  const paidAtomic = bill?.fundingPaidUsdtAtomic ? BigInt(bill.fundingPaidUsdtAtomic) : 0n;
+  const neededAtomic = bill?.fundingNeededUsdt ? usdtDecimalToAtomic(bill.fundingNeededUsdt) : null;
+  const remainingAtomic = neededAtomic !== null && neededAtomic > paidAtomic ? neededAtomic - paidAtomic : 0n;
+  const billOpen = bill?.status !== "paid" && bill?.status !== "failed";
+  const payBusy = payStatus !== "idle" && payStatus !== "done";
+  const payStatusWords: Record<string, string> = {
+    connecting: "Connecting your wallet…",
+    checking: "Checking your USDT…",
+    paying: "Waiting for you to approve the payment in your wallet…",
+    reporting: "Payment sent — recording it for this bill…",
+    done: "Paid.",
+  };
+
   const statusWords: Record<string, string> = {
     created: "We have your bill. The next check runs every few minutes — it looks at the rate and at the USDT in the agent wallet.",
     watching: bill?.note ?? "Watching the rate. Nothing has moved yet.",
@@ -169,31 +270,117 @@ export default function BillPage() {
               {bill.lastNairaSaved !== null && bill.lastNairaSaved > 0 && (
                 <p><b>Waiting has saved about {formatNaira(bill.lastNairaSaved)} so far</b> vs changing the money at the rate seen.</p>
               )}
-              {bill.fundingNeededUsdt && bill.fundingReady === false && (
+              {billOpen && neededAtomic === null && (
+                <p>The worker is checking the rate — the amount to pay will show here once it has.</p>
+              )}
+              {billOpen && neededAtomic !== null && remainingAtomic === 0n && paidAtomic > 0n && (
                 <p>
-                  <b>To pay this bill we need about ${Number(bill.fundingNeededUsdt).toFixed(2)} USDT in the agent wallet.</b>{" "}
-                  {agentWallet ? (
-                    <>
-                      Send it to{" "}
-                      <a href={`${bill.explorerUrl}/address/${agentWallet}`} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, wordBreak: "break-all" }}>
-                        {shortAddress(agentWallet)} ↗
-                      </a>{" "}
-                      and we will change it and pay your supplier. Nothing moves until then.
-                    </>
-                  ) : (
-                    "We will show you where to send it — the page is still loading that part."
+                  <b>You paid {formatUsdtDollars(paidAtomic)} USDT</b> — the money is in the agent wallet and we are watching the rate.
+                  {bill.fundingPayerWallet && (
+                    <> It came from <span className="mono" style={{ fontSize: 13 }}>{shortAddress(bill.fundingPayerWallet)}</span>.</>
                   )}
                 </p>
               )}
-              {bill.fundingReady === true && bill.status !== "paid" && (
-                <p><b>The USDT is in the agent wallet</b> — we are watching the rate.</p>
+              {billOpen && neededAtomic !== null && remainingAtomic > 0n && (
+                <div>
+                  <p>
+                    <b>
+                      {paidAtomic > 0n
+                        ? `You paid ${formatUsdtDollars(paidAtomic)} USDT — ${formatUsdtDollars(remainingAtomic)} more to go.`
+                        : `To pay this bill we need ${formatUsdtDollars(remainingAtomic)} USDT.`}
+                    </b>{" "}
+                    Pay it from your own Celo wallet — you need USDT in your wallet, plus a little CELO for gas. The money goes to the agent
+                    wallet:
+                  </p>
+                  <p className="mono" style={{ fontSize: 13, wordBreak: "break-all", marginTop: 8 }}>
+                    {agentWallet ?? "Loading the agent wallet…"}
+                  </p>
+                  {agentWallet && (
+                    <p style={{ marginTop: 6 }}>
+                      <a href={`${bill.explorerUrl}/address/${agentWallet}`} target="_blank" rel="noreferrer">
+                        See the agent wallet on Celoscan ↗
+                      </a>
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handlePay(remainingAtomic)}
+                    disabled={payBusy}
+                    style={{
+                      marginTop: 12,
+                      padding: "12px 20px",
+                      borderRadius: 10,
+                      border: "none",
+                      background: "var(--forest, #13271c)",
+                      color: "#fff",
+                      fontSize: 16,
+                      fontWeight: 600,
+                      cursor: payBusy ? "wait" : "pointer",
+                      opacity: payBusy ? 0.7 : 1,
+                    }}
+                  >
+                    {payStatus === "idle" || payStatus === "done"
+                      ? `Pay ${formatUsdtDollars(remainingAtomic)} USDT from my wallet`
+                      : payStatusWords[payStatus]}
+                  </button>
+                  {payStatus === "done" && (
+                    <p style={{ marginTop: 8 }}><b>Paid.</b> The money is in the agent wallet — we are watching the rate.</p>
+                  )}
+                  {payError && (
+                    <p style={{ marginTop: 8, color: "#a33" }}>{payError}</p>
+                  )}
+                  <p style={{ marginTop: 12 }}>
+                    <button
+                      type="button"
+                      onClick={() => setManualOpen((v) => !v)}
+                      disabled={payBusy}
+                      style={{ background: "none", border: "none", padding: 0, color: "var(--muted)", fontSize: 14, textDecoration: "underline", cursor: "pointer" }}
+                    >
+                      {manualOpen ? "Hide the manual payment form" : "I sent the USDT myself — report the payment"}
+                    </button>
+                  </p>
+                  {manualOpen && (
+                    <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                      <p style={{ fontSize: 14, color: "var(--ink-2)" }}>
+                        Send exactly {formatUsdtDollars(remainingAtomic)} USDT to the agent wallet above, then paste the transaction hash here.
+                        We check it onchain before recording it for this bill.
+                      </p>
+                      <input
+                        value={manualHash}
+                        onChange={(e) => setManualHash(e.target.value)}
+                        placeholder="0x… transaction hash"
+                        className="mono"
+                        style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--line, #ddd)", fontSize: 13, width: "100%" }}
+                      />
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => handleManualReport(remainingAtomic)}
+                          disabled={payBusy}
+                          style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid var(--line, #ddd)", background: "var(--surface, #fff)", fontSize: 15, fontWeight: 600, cursor: payBusy ? "wait" : "pointer" }}
+                        >
+                          {payStatus === "reporting" ? "Checking the payment…" : "Report my payment"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
-            {(bill.approvalTxHashes.length > 0 || bill.swapTxHash || bill.payoutTxHash) && (
+            {(bill.fundingTxHashes.length > 0 || bill.approvalTxHashes.length > 0 || bill.swapTxHash || bill.payoutTxHash) && (
               <div style={{ marginTop: 24 }}>
                 <h2 style={{ fontSize: 20 }}>On the chain</h2>
                 <div className="card pad" style={{ marginTop: 12, display: "grid", gap: 12 }}>
+                  {bill.fundingTxHashes.map((h) => (
+                    <p key={h}>
+                      <b>You paid (USDT):</b>{" "}
+                      <a href={`${bill.explorerUrl}/tx/${h}`} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 12, wordBreak: "break-all" }}>
+                        {h.slice(0, 18)}… ↗
+                      </a>{" "}
+                      <span style={{ color: "var(--muted)" }}>— tagged as Ikenga work.</span>
+                    </p>
+                  ))}
                   {bill.approvalTxHashes.map((h, i) => (
                     <p key={h}>
                       <b>Approval {bill.approvalTxHashes.length > 1 ? i + 1 : ""}:</b>{" "}

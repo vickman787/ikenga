@@ -36,6 +36,20 @@ export interface LedgerOrder {
   description: string;
   status: string;
   priceMicroUsdc: number;
+  /** Which currency the customer pays this job in. USDT on mainnet, test
+   * USDC on Sepolia, cNGN on mainnet. The $1 value never changes — only
+   * the currency it is paid in. Defaults to "USDT" for old rows. */
+  payCurrency?: "USDT" | "USDC" | "cNGN";
+  /** The exact price fixed at hire time, in the pay currency's atomic
+   * units (6 decimals), as a string. "1000000" for a $1 USDT job; the
+   * live-rate cNGN amount (about "1445000000") for a cNGN job. */
+  priceAtomic?: string;
+  /** cNGN per $1 fixed at hire time (e.g. "1444.067"). Null for USDT/USDC jobs. */
+  priceRate?: string | null;
+  /** The token the job's escrow holds. Null for old rows (USDT mainnet). */
+  tokenAddress?: string | null;
+  /** The vault the job's escrow pays into. Null for old rows (USDT vault). */
+  vaultAddress?: string | null;
   /** Bond the CFO puts up (micro-USDC). Defaults to 100000 ($0.10) for old rows. */
   bondMicroUsdc?: number;
   cfoAccepted?: boolean;
@@ -100,6 +114,10 @@ export interface LedgerDecision {
   kind: string;
   reason: string;
   amountMicroUsdc: number;
+  /** Which currency the money in this decision is in. The amount is
+   * still recorded in micro-USDC for the CFO's $1 maths; the currency
+   * says what the customer actually paid. Defaults to "USDT" for old rows. */
+  currency?: "USDT" | "USDC" | "cNGN";
   prevHash: string;
   hash: string;
   signature: string;
@@ -195,6 +213,12 @@ export interface LedgerBill {
   fundingNeededUsdt: string | null;
   /** Null = not checked yet. */
   fundingReady: boolean | null;
+  /** The wallet that paid for this bill — the friend's own wallet, set by the first verified funding transfer. */
+  fundingPayerWallet: string | null;
+  /** Verified funding transfers for this bill. A hash is recorded on one bill only, so two bills can never claim the same funding. */
+  fundingTxHashes: string[];
+  /** Total USDT paid for this bill across its verified funding transfers, in atomic units (6 decimals). Null until the first funding lands. */
+  fundingPaidUsdtAtomic: string | null;
   /** The firm quote being worked, if any. */
   rfqId: string | null;
   /** Tagged USDT approval tx(s) before the swap. */
@@ -211,7 +235,7 @@ export interface LedgerBill {
 
 /** One receipt in a bill's hash chain — the same chaining as the CFO
  * decision log, so a bill's history can't be rewritten silently. */
-export type BillEventKind = "created" | "quote" | "refuse" | "convert" | "swap" | "payout" | "paid" | "failed" | "waiting";
+export type BillEventKind = "created" | "quote" | "refuse" | "convert" | "swap" | "payout" | "paid" | "failed" | "waiting" | "funded";
 
 export interface BillEvent {
   id: string;
@@ -240,6 +264,9 @@ export interface BillPatch {
   lastNairaSaved?: number | null;
   fundingNeededUsdt?: string | null;
   fundingReady?: boolean | null;
+  fundingPayerWallet?: string | null;
+  fundingTxHashes?: string[];
+  fundingPaidUsdtAtomic?: string | null;
   rfqId?: string | null;
   approvalTxHashes?: string[];
   swapTxHash?: string | null;
@@ -274,7 +301,7 @@ export interface Ledger {
   /** Reconcile an order's payments: settled = tx hash present, unresolved = none, failed = failed/ambiguous. */
   reconcile(orderId: string): Promise<Reconciliation>;
   /** A naira bill (Corridors track): someone owes a supplier in naira. */
-  createBill(bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">): Promise<LedgerBill>;
+  createBill(bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "fundingPayerWallet" | "fundingTxHashes" | "fundingPaidUsdtAtomic" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">): Promise<LedgerBill>;
   getBill(id: string): Promise<LedgerBill | null>;
   listBills(): Promise<LedgerBill[]>;
   /** Change a bill's fields (boss worker progress). Only the fields present change. */
@@ -405,7 +432,7 @@ export class MemoryLedger implements Ledger {
   }
 
   async createBill(
-    bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">,
+    bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "fundingPayerWallet" | "fundingTxHashes" | "fundingPaidUsdtAtomic" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">,
   ): Promise<LedgerBill> {
     const now = new Date().toISOString();
     const full: LedgerBill = {
@@ -421,6 +448,9 @@ export class MemoryLedger implements Ledger {
       lastNairaSaved: null,
       fundingNeededUsdt: null,
       fundingReady: null,
+      fundingPayerWallet: null,
+      fundingTxHashes: [],
+      fundingPaidUsdtAtomic: null,
       rfqId: null,
       approvalTxHashes: [],
       swapTxHash: null,
@@ -493,11 +523,13 @@ export class PostgresLedger implements Ledger {
 
   async createOrder(order: Omit<LedgerOrder, "createdAt" | "priceMicroUsdc"> & { priceMicroUsdc?: number }): Promise<LedgerOrder> {
     const { rows } = await this.pool.query(
-      `INSERT INTO orders (id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, escrow_address, fund_tx_hash, deliverable_tx_hash, settle_tx_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING ${ORDER_COLS}`,
+      `INSERT INTO orders (id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, escrow_address, fund_tx_hash, deliverable_tx_hash, settle_tx_hash, pay_currency, price_atomic, price_rate, token_address, vault_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING ${ORDER_COLS}`,
       [order.id, order.jobType, order.customerWallet, order.description, order.status, order.priceMicroUsdc ?? 1_000_000,
        order.bondMicroUsdc ?? 100_000, order.cfoAccepted ?? true, order.cfoReason ?? "", order.decisionHash ?? "",
-       order.escrowAddress ?? null, order.fundTxHash ?? null, order.deliverableTxHash ?? null, order.settleTxHash ?? null],
+       order.escrowAddress ?? null, order.fundTxHash ?? null, order.deliverableTxHash ?? null, order.settleTxHash ?? null,
+       order.payCurrency ?? "USDT", order.priceAtomic ?? "1000000", order.priceRate ?? null,
+       order.tokenAddress ?? null, order.vaultAddress ?? null],
     );
     return rowToOrder(rows[0]);
   }
@@ -586,10 +618,10 @@ export class PostgresLedger implements Ledger {
       const prevHash = last.rows.length === 0 ? "0".repeat(64) : last.rows[0].hash;
       const hash = chainHash(prevHash, d.entry);
       const { rows } = await client.query(
-        `INSERT INTO decision_log (id, order_id, kind, reason, amount_micro_usdc, prev_hash, hash, signature, entry_text, tx_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id, order_id, kind, reason, amount_micro_usdc, prev_hash, hash, signature, entry_text, tx_hash, created_at`,
-        [d.id, d.orderId, d.kind, d.reason, d.amountMicroUsdc, prevHash, hash, d.signature, d.entry, d.txHash ?? null],
+        `INSERT INTO decision_log (id, order_id, kind, reason, amount_micro_usdc, currency, prev_hash, hash, signature, entry_text, tx_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING id, order_id, kind, reason, amount_micro_usdc, currency, prev_hash, hash, signature, entry_text, tx_hash, created_at`,
+        [d.id, d.orderId, d.kind, d.reason, d.amountMicroUsdc, d.currency ?? "USDT", prevHash, hash, d.signature, d.entry, d.txHash ?? null],
       );
       await client.query("COMMIT");
       return rowToDecision(rows[0]);
@@ -603,7 +635,7 @@ export class PostgresLedger implements Ledger {
 
   async listDecisions(orderId: string): Promise<LedgerDecision[]> {
     const { rows } = await this.pool.query(
-      `SELECT id, order_id, kind, reason, amount_micro_usdc, prev_hash, hash, signature, entry_text, tx_hash, created_at
+      `SELECT id, order_id, kind, reason, amount_micro_usdc, currency, prev_hash, hash, signature, entry_text, tx_hash, created_at
        FROM decision_log WHERE order_id = $1 ORDER BY created_at ASC`,
       [orderId],
     );
@@ -690,7 +722,7 @@ export class PostgresLedger implements Ledger {
   }
 
   async createBill(
-    bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">,
+    bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "fundingPayerWallet" | "fundingTxHashes" | "fundingPaidUsdtAtomic" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">,
   ): Promise<LedgerBill> {
     const { rows } = await this.pool.query(
       `INSERT INTO bills (id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, status)
@@ -726,6 +758,9 @@ export class PostgresLedger implements Ledger {
       ["last_naira_saved", patch.lastNairaSaved === undefined ? undefined : patch.lastNairaSaved],
       ["funding_needed_usdt", patch.fundingNeededUsdt === undefined ? undefined : patch.fundingNeededUsdt],
       ["funding_ready", patch.fundingReady === undefined ? undefined : patch.fundingReady],
+      ["funding_payer_wallet", patch.fundingPayerWallet === undefined ? undefined : patch.fundingPayerWallet],
+      ["funding_tx_hashes", patch.fundingTxHashes === undefined ? undefined : JSON.stringify(patch.fundingTxHashes)],
+      ["funding_paid_usdt_atomic", patch.fundingPaidUsdtAtomic === undefined ? undefined : patch.fundingPaidUsdtAtomic],
       ["rfq_id", patch.rfqId === undefined ? undefined : patch.rfqId],
       ["approval_tx_hashes", patch.approvalTxHashes === undefined ? undefined : JSON.stringify(patch.approvalTxHashes)],
       ["swap_tx_hash", patch.swapTxHash === undefined ? undefined : patch.swapTxHash],
@@ -793,7 +828,7 @@ export class PostgresLedger implements Ledger {
 
 /** Every column of the bills table, in one place. */
 const BILL_COLS =
-  "id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, status, note, last_checked_at, last_rate, last_rate_at, last_decision, last_decision_reason, last_bps_gap, last_naira_saved, funding_needed_usdt, funding_ready, rfq_id, approval_tx_hashes, swap_tx_hash, forced, payout_tx_hash, created_at, updated_at";
+  "id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, status, note, last_checked_at, last_rate, last_rate_at, last_decision, last_decision_reason, last_bps_gap, last_naira_saved, funding_needed_usdt, funding_ready, funding_payer_wallet, funding_tx_hashes, funding_paid_usdt_atomic, rfq_id, approval_tx_hashes, swap_tx_hash, forced, payout_tx_hash, created_at, updated_at";
 
 function rowToBill(r: Record<string, unknown>): LedgerBill {
   return {
@@ -815,6 +850,9 @@ function rowToBill(r: Record<string, unknown>): LedgerBill {
     lastNairaSaved: r.last_naira_saved === null || r.last_naira_saved === undefined ? null : Number(r.last_naira_saved),
     fundingNeededUsdt: r.funding_needed_usdt === null || r.funding_needed_usdt === undefined ? null : String(r.funding_needed_usdt),
     fundingReady: r.funding_ready === null || r.funding_ready === undefined ? null : Boolean(r.funding_ready),
+    fundingPayerWallet: r.funding_payer_wallet === null || r.funding_payer_wallet === undefined ? null : String(r.funding_payer_wallet),
+    fundingTxHashes: r.funding_tx_hashes ? JSON.parse(String(r.funding_tx_hashes)) as string[] : [],
+    fundingPaidUsdtAtomic: r.funding_paid_usdt_atomic === null || r.funding_paid_usdt_atomic === undefined ? null : String(r.funding_paid_usdt_atomic),
     rfqId: r.rfq_id === null || r.rfq_id === undefined ? null : String(r.rfq_id),
     approvalTxHashes: r.approval_tx_hashes ? JSON.parse(String(r.approval_tx_hashes)) as string[] : [],
     swapTxHash: r.swap_tx_hash === null || r.swap_tx_hash === undefined ? null : String(r.swap_tx_hash),
@@ -844,7 +882,7 @@ function rowToBillEvent(r: Record<string, unknown>): BillEvent {
 /** Every column of the orders table, in one place, so the SELECTs and
  * RETURNINGs in PostgresLedger can't drift out of sync with rowToOrder. */
 const ORDER_COLS =
-  "id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, escrow_address, fund_tx_hash, deliverable_tx_hash, settle_tx_hash, created_at";
+  "id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, escrow_address, fund_tx_hash, deliverable_tx_hash, settle_tx_hash, pay_currency, price_atomic, price_rate, token_address, vault_address, created_at";
 
 function rowToOrder(r: Record<string, unknown>): LedgerOrder {
   return {
@@ -862,6 +900,11 @@ function rowToOrder(r: Record<string, unknown>): LedgerOrder {
     fundTxHash: r.fund_tx_hash === null || r.fund_tx_hash === undefined ? null : String(r.fund_tx_hash),
     deliverableTxHash: r.deliverable_tx_hash === null || r.deliverable_tx_hash === undefined ? null : String(r.deliverable_tx_hash),
     settleTxHash: r.settle_tx_hash === null || r.settle_tx_hash === undefined ? null : String(r.settle_tx_hash),
+    payCurrency: (r.pay_currency === null || r.pay_currency === undefined ? "USDT" : String(r.pay_currency)) as LedgerOrder["payCurrency"],
+    priceAtomic: r.price_atomic === null || r.price_atomic === undefined ? undefined : String(r.price_atomic),
+    priceRate: r.price_rate === null || r.price_rate === undefined ? null : String(r.price_rate),
+    tokenAddress: r.token_address === null || r.token_address === undefined ? null : String(r.token_address),
+    vaultAddress: r.vault_address === null || r.vault_address === undefined ? null : String(r.vault_address),
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   };
 }
@@ -873,6 +916,7 @@ function rowToDecision(r: Record<string, unknown>): LedgerDecision {
     kind: String(r.kind),
     reason: String(r.reason),
     amountMicroUsdc: Number(r.amount_micro_usdc),
+    currency: (r.currency === null || r.currency === undefined ? "USDT" : String(r.currency)) as LedgerDecision["currency"],
     prevHash: String(r.prev_hash),
     hash: String(r.hash),
     signature: String(r.signature),

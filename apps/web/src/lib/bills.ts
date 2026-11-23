@@ -25,6 +25,8 @@ import {
 import { MAX_BILL_NGN, MAX_DEADLINE_DAYS, MIN_BILL_NGN } from "./billConstants";
 import { getChainConfig, getLedger } from "./jobs";
 
+export { usdtAtomicToDecimal, usdtDecimalToAtomic } from "./usdt";
+
 export { MAX_BILL_NGN, MAX_DEADLINE_DAYS, MIN_BILL_NGN } from "./billConstants";
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -90,7 +92,15 @@ export const BillWorkerUpdateSchema = z.object({
 });
 export type BillWorkerUpdate = z.infer<typeof BillWorkerUpdateSchema>;
 
-/** A bill as the pages and the API show it. */
+/** What the payer's browser reports after paying for a bill: the funding
+ * transfer's hash, the wallet that paid, and the amount in atomic USDT.
+ * The update route checks the hash onchain before recording anything. */
+export const BillFundingReportSchema = z.object({
+  txHash: z.string().regex(TX_HASH_RE, "That transaction hash doesn't look right"),
+  payerWallet: z.string().regex(ADDRESS_RE, "That wallet address doesn't look right"),
+  amountAtomic: z.string().regex(/^\d+$/, "The amount must be whole atomic USDT").refine((v) => BigInt(v) > 0n, "The amount must be more than zero"),
+});
+export type BillFundingReport = z.infer<typeof BillFundingReportSchema>;
 export interface BillResult {
   id: string;
   payerName: string;
@@ -110,6 +120,12 @@ export interface BillResult {
   lastNairaSaved: number | null;
   fundingNeededUsdt: string | null;
   fundingReady: boolean | null;
+  /** The wallet that paid for this bill — the friend's own wallet. Null until the first verified funding lands. */
+  fundingPayerWallet: string | null;
+  /** Verified funding transfers for this bill (hashes). A hash is recorded on one bill only. */
+  fundingTxHashes: string[];
+  /** Total USDT paid for this bill across its verified funding transfers, in atomic units. Null until the first funding lands. */
+  fundingPaidUsdtAtomic: string | null;
   rfqId: string | null;
   approvalTxHashes: string[];
   swapTxHash: string | null;
@@ -141,6 +157,9 @@ export function billToResult(b: LedgerBill): BillResult {
     lastNairaSaved: b.lastNairaSaved,
     fundingNeededUsdt: b.fundingNeededUsdt,
     fundingReady: b.fundingReady,
+    fundingPayerWallet: b.fundingPayerWallet,
+    fundingTxHashes: b.fundingTxHashes,
+    fundingPaidUsdtAtomic: b.fundingPaidUsdtAtomic,
     rfqId: b.rfqId,
     approvalTxHashes: b.approvalTxHashes,
     swapTxHash: b.swapTxHash,
@@ -210,6 +229,8 @@ export async function verifyBillEvents(id: string): Promise<boolean> {
   return ledger.verifyBillChain(id);
 }
 
+import { usdtAtomicToDecimal, usdtDecimalToAtomic } from "./usdt";
+
 /**
  * Apply a worker report: field updates, a receipt, or both. The route
  * checks any swap/payout hash onchain before calling this — never record
@@ -238,4 +259,78 @@ export async function applyBillUpdate(id: string, input: BillWorkerUpdate): Prom
   }
   const updated = await ledger.getBill(id);
   return updated ? billToResult(updated) : null;
+}
+
+/** Find the bill a funding hash is already recorded on, if any. A hash
+ * belongs to one bill only — this is what stops two bills claiming the
+ * same funding. */
+export async function findBillByFundingTxHash(txHash: string): Promise<BillResult | null> {
+  const ledger = await getLedger();
+  for (const bill of await ledger.listBills()) {
+    if (bill.fundingTxHashes.includes(txHash)) return billToResult(bill);
+  }
+  return null;
+}
+
+/**
+ * Record a funding payment on a bill — after the update route has
+ * verified the transfer onchain (successful, USDT, from the payer's
+ * wallet, to the agent wallet, for exactly this amount).
+ *
+ * The payment is added to the bill's own funding total, so a second
+ * transfer tops the same bill up when the rate moved and more is
+ * needed. Recording the same hash twice on this bill is a no-op (the
+ * payer's browser may retry); recording it on another bill, paying
+ * from a different wallet than the first funding, or funding a bill
+ * that is already paid or failed is refused. `fundingReady` follows
+ * the amount the bill needs right now, when that amount is known —
+ * the worker recomputes it every run.
+ */
+export async function recordBillFunding(
+  id: string,
+  funding: BillFundingReport,
+): Promise<BillResult> {
+  const ledger = await getLedger();
+  const bill = await ledger.getBill(id);
+  if (!bill) throw new Error("No bill with that id.");
+  if (bill.status === "paid" || bill.status === "failed") {
+    throw new Error("That bill is already finished — it can't take more funding.");
+  }
+  if (bill.fundingTxHashes.includes(funding.txHash)) {
+    // Already recorded — the payer's browser retried. Nothing to do.
+    return billToResult(bill);
+  }
+  for (const other of await ledger.listBills()) {
+    if (other.id !== id && other.fundingTxHashes.includes(funding.txHash)) {
+      throw new Error("That payment is already recorded on another bill — one payment can't fund two bills.");
+    }
+  }
+  if (bill.fundingPayerWallet && bill.fundingPayerWallet.toLowerCase() !== funding.payerWallet.toLowerCase()) {
+    throw new Error("That payment came from a different wallet than the one that funded this bill before.");
+  }
+  const paidBefore = bill.fundingPaidUsdtAtomic ? BigInt(bill.fundingPaidUsdtAtomic) : 0n;
+  const paidTotal = paidBefore + BigInt(funding.amountAtomic);
+  let fundingReady: boolean | null = bill.fundingReady;
+  if (bill.fundingNeededUsdt) {
+    fundingReady = paidTotal >= usdtDecimalToAtomic(bill.fundingNeededUsdt);
+  }
+  await ledger.updateBill(id, {
+    fundingPayerWallet: funding.payerWallet,
+    fundingTxHashes: [...bill.fundingTxHashes, funding.txHash],
+    fundingPaidUsdtAtomic: paidTotal.toString(),
+    fundingReady,
+  });
+  await ledger.appendBillEvent({
+    id: `bev_${id}_fund_${Date.now()}`,
+    billId: id,
+    kind: "funded",
+    reason: `Paid $${usdtAtomicToDecimal(funding.amountAtomic)} USDT from ${funding.payerWallet} — the money for this bill is in the agent wallet.`,
+    rateSeen: null,
+    bpsGap: null,
+    txHash: funding.txHash,
+    entry: `funded|${funding.txHash}|${funding.amountAtomic}`,
+  });
+  const updated = await ledger.getBill(id);
+  if (!updated) throw new Error("No bill with that id.");
+  return billToResult(updated);
 }
