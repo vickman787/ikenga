@@ -275,6 +275,39 @@ describe("PostgresLedger (pg-mem)", () => {
     await pool.end();
   });
 
+  it("accepts the Investigator's checks in the money log", async () => {
+    // Regression: the /run route writes kind 'investigate' for every
+    // onchain check, but the decision_log CHECK list did not allow it —
+    // so starting any job failed with a constraint error and the page
+    // got an empty 500. The schema must accept this kind.
+    const db = newDb();
+    const { Pool } = db.adapters.createPg();
+    const pool = new Pool();
+    const ledger = new PostgresLedger(pool as never);
+    await ledger.init();
+    await ledger.createOrder({
+      id: "ord_pg_inv",
+      jobType: "website",
+      customerWallet: "0x0000000000000000000000000000000000000002",
+      description: "Website",
+      status: "escrowed",
+    });
+    await ledger.appendDecision({
+      id: "dec_pg_inv",
+      orderId: "ord_pg_inv",
+      kind: "investigate",
+      reason: "Investigator: The escrow onchain is funded — the $1 is in it.",
+      amountMicroUsdc: 0,
+      signature: "0xikenga-step2",
+      entry: "investigate|job|escrow state|passed|The escrow onchain is funded — the $1 is in it.",
+    });
+    const decisions = await ledger.listDecisions("ord_pg_inv");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]?.kind).toBe("investigate");
+    expect(await ledger.verifyOrderChain("ord_pg_inv")).toBe(true);
+    await pool.end();
+  });
+
   it("stores entry_text and detects a tampered decision", async () => {
     const db = newDb();
     const { Pool } = db.adapters.createPg();

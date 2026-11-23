@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS decision_log (
   order_id TEXT NOT NULL REFERENCES orders(id),
   kind TEXT NOT NULL
     CHECK (kind IN ('quote', 'escrow', 'top-up', 'accept', 'reject', 'refund', 'refuse',
-                    'fx-quote', 'fx-swap', 'fx-refuse', 'self-verify', 'self-refuse', 'x402-settle')),
+                    'fx-quote', 'fx-swap', 'fx-refuse', 'self-verify', 'self-refuse', 'x402-settle', 'investigate')),
   reason TEXT NOT NULL,
   amount_micro_usdc BIGINT NOT NULL DEFAULT 0,
   -- Which currency the money in this decision is in (USDT by default).
@@ -64,6 +64,17 @@ CREATE INDEX IF NOT EXISTS decision_log_order_idx ON decision_log (order_id, cre
 CREATE INDEX IF NOT EXISTS decision_log_hash_idx ON decision_log (hash);
 -- Currency of each decision's money (added with the cNGN jobs).
 ALTER TABLE decision_log ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USDT';
+
+-- The Investigator's checks are written to decision_log too (see the
+-- /run route), but the original CHECK list above did not allow
+-- 'investigate' — so starting any job failed with a constraint error
+-- and the page got an empty 500. Existing databases keep the old
+-- constraint (CREATE TABLE IF NOT EXISTS is a no-op for them), so
+-- replace it here. Fresh databases get the new list from the CREATE
+-- above, and these two lines re-apply the same list harmlessly.
+ALTER TABLE decision_log DROP CONSTRAINT IF EXISTS decision_log_kind_check;
+ALTER TABLE decision_log ADD CONSTRAINT decision_log_kind_check CHECK (kind IN ('quote', 'escrow', 'top-up', 'accept', 'reject', 'refund', 'refuse',
+  'fx-quote', 'fx-swap', 'fx-refuse', 'self-verify', 'self-refuse', 'x402-settle', 'investigate'));
 
 -- Step 2: Textile FX swaps (plan §2.2). The claim token is NOT stored here:
 -- it lives in server memory for the life of the RFQ only (risk R-8).

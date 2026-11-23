@@ -264,7 +264,9 @@ export default function JobPage() {
         const cur = dataRef.current;
         if (!cur?.report || cur.report.status !== "in-progress" || cur.report.stage === 0) break;
         const res = await fetch(`/api/jobs/${id}/run/step`, { method: "POST" });
-        const d = await res.json();
+        // A failed step must say so in plain words — never surface a
+        // JSON parse error when the server answers with an empty body.
+        const d = await res.json().catch(() => ({} as { error?: string }));
         if (!res.ok) throw new Error(d.error ?? "The team could not finish this step");
         await reload();
         if (d.done) break;
@@ -286,7 +288,9 @@ export default function JobPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(note ? { revisionNote: note } : {}),
       });
-      const d = await res.json();
+      // Same guard as driveStages: an empty answer must become a
+      // plain-words error, never a JSON parse failure.
+      const d = await res.json().catch(() => ({} as { error?: string }));
       if (!res.ok) throw new Error(d.error ?? "The team could not start the work");
       setShowRevise(false);
       setRevisionNote("");

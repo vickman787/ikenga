@@ -114,17 +114,28 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // the job stays escrowed, so the customer can start it again.
   const ledger = await getLedger();
   const investigation = await investigateHireEscrow(hire);
-  for (let i = 0; i < investigation.checks.length; i++) {
-    const check = investigation.checks[i];
-    await ledger.appendDecision({
-      id: `dec_${id}_investigate_${i}_${Date.now()}`,
-      orderId: id,
-      kind: "investigate",
-      reason: `Investigator: ${check.detail}`,
-      amountMicroUsdc: 0,
-      signature: "0xikenga-step2",
-      entry: `investigate|job|${check.name}|${check.result}|${check.detail}`,
-    });
+  // Writing the checks to the log must not fail silently into an empty
+  // 500: when the log cannot take them, say so in plain words and do
+  // not start the job without its audit trail. (This caught a real
+  // bug: the decision_log CHECK list did not allow 'investigate'.)
+  try {
+    for (let i = 0; i < investigation.checks.length; i++) {
+      const check = investigation.checks[i];
+      await ledger.appendDecision({
+        id: `dec_${id}_investigate_${i}_${Date.now()}`,
+        orderId: id,
+        kind: "investigate",
+        reason: `Investigator: ${check.detail}`,
+        amountMicroUsdc: 0,
+        signature: "0xikenga-step2",
+        entry: `investigate|job|${check.name}|${check.result}|${check.detail}`,
+      });
+    }
+  } catch (err) {
+    return NextResponse.json(
+      { error: `The checks could not be written to the money log — try starting the work again in a moment. (${err instanceof Error ? err.message : "unknown error"})` },
+      { status: 502 },
+    );
   }
   if (!investigation.readable) {
     return NextResponse.json(
