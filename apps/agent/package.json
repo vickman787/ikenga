@@ -15,15 +15,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/cli.js",
+    "boss": "tsc -p tsconfig.build.json && node dist/boss-worker.js",
     "exec:sepolia": "tsc -p tsconfig.build.json && node dist/e2e-sepolia.js",
     "run:report": "tsc -p tsconfig.build.json && node dist/run-report.js",
     "test": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "exec:per-job-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-per-job-sepolia.js"
   },
   "dependencies": {
     "@ikenga/ledger": "workspace:*",
     "@ikenga/payments": "workspace:*",
-    "@ikenga/shared": "workspace:*"
+    "@ikenga/shared": "workspace:*",
+    "viem": "^2.58.4"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

@@ -10,8 +10,14 @@
  * delivered work (and, while the job runs, which stage is next and the
  * pages gathered so far) is stored in the deliveries table.
  *
- * No money moves here — escrow funding, x402 settlement and the Textile
- * swap happen in the agent runner (apps/agent), not in this form.
+ * The $1 itself moves through escrow, not through this form. Each job
+ * gets its own JobEscrow contract, deployed from the customer's browser:
+ * the browser posts the escrow address here, then pays the $1 in, and
+ * only once the server has checked that payment onchain does the team
+ * start. Accepting the work releases the $1 to the vault; turning it
+ * down sends it back. The on-chain checks live in @ikenga/payments
+ * (readEscrowOnchain / verifyTxReceipt, re-exported below) and the
+ * routes under app/api/jobs/[id]/.
  */
 import { z } from "zod";
 import { Pool } from "pg";
@@ -26,6 +32,16 @@ import {
 } from "@ikenga/ledger";
 import type { CreativeJobType, CreativeProgress, ReportProgress } from "@ikenga/agent";
 import { creativeStageLabel, reportStageLabel } from "@ikenga/agent";
+// Mainnet defaults, from the deployed contracts (contracts/deployments/celo.json).
+// The Sepolia deployment file is local-only and gitignored, so Sepolia
+// config must come from env — see getChainConfig().
+import celoDeploy from "../../../../contracts/deployments/celo.json";
+
+/** On-chain escrow checks, from @ikenga/payments (viem lives there —
+// the web app has no viem dependency of its own). The routes import
+// them from here. */
+export { readEscrowDeliverableHash, readEscrowOnchain, verifyTxReceipt } from "@ikenga/payments";
+export type { EscrowOnchain, TxReceiptCheck } from "@ikenga/payments";
 
 /** Plain-words label for what the team is doing right now, for any job type. */
 export function deliveryStageLabel(jobType: JobType, stage: number): string {
@@ -52,13 +68,81 @@ export interface HireResult {
   jobType: JobType;
   description: string;
   customerWallet: string;
-  status: "draft" | "in-progress" | "delivered" | "accepted" | "rejected" | "refunded";
+  status: "draft" | "escrowed" | "in-progress" | "delivered" | "accepted" | "rejected" | "refunded";
   priceUsdc: number;
   bondUsdc: number;
   cfoAccepted: boolean;
   cfoReason: string;
   decisionHash: string;
   createdAt: string;
+  /** The job's own JobEscrow contract. Null until the browser deploys and registers it. */
+  escrowAddress: string | null;
+  /** Tx that paid the $1 into the escrow. Null until funded. */
+  fundTxHash: string | null;
+  /** Tx that sealed the delivered work's hash on the escrow. Null until sealed (boss worker). */
+  deliverableTxHash: string | null;
+  /** Tx that settled the escrow — the customer's accept() or reject(). Null until decided. */
+  settleTxHash: string | null;
+  /** The escrow's on-chain state, read off the job's status. Null until an escrow is registered. */
+  escrowState: "unfunded" | "funded" | "accepted" | "rejected" | "released" | null;
+}
+
+/** Which chain a job's escrow lives on, and what it pays with. */
+export interface ChainConfig {
+  chainId: number;
+  chainName: string;
+  vaultAddress: string;
+  tokenAddress: string;
+  tokenSymbol: "USDT" | "USDC";
+  /** The $1 price in atomic units (6 decimals), as a string. */
+  priceAtomic: "1000000";
+  /** The bond in atomic units — always "0" (see createHire). */
+  bondAtomic: "0";
+  explorerUrl: string;
+}
+
+/**
+ * The chain the escrows live on. IKENGA_CHAIN picks it ("mainnet" by
+ * default, "sepolia" for tests); IKENGA_VAULT_ADDRESS and
+ * IKENGA_TOKEN_ADDRESS override the addresses. Mainnet defaults come
+ * from contracts/deployments/celo.json; Sepolia has no shipped defaults
+ * (its deployment file is local-only), so Sepolia without both env vars
+ * is an error, not a guess.
+ */
+export function getChainConfig(): ChainConfig {
+  const chain = (process.env.IKENGA_CHAIN ?? "mainnet").toLowerCase();
+  if (chain !== "mainnet" && chain !== "sepolia") {
+    throw new Error(`IKENGA_CHAIN must be "mainnet" or "sepolia", got "${chain}".`);
+  }
+  if (chain === "sepolia") {
+    const vaultAddress = process.env.IKENGA_VAULT_ADDRESS;
+    const tokenAddress = process.env.IKENGA_TOKEN_ADDRESS;
+    if (!vaultAddress || !tokenAddress) {
+      throw new Error(
+        "Sepolia needs IKENGA_VAULT_ADDRESS and IKENGA_TOKEN_ADDRESS set on the server — the Sepolia deployment file is local-only and never ships.",
+      );
+    }
+    return {
+      chainId: 11142220,
+      chainName: "Celo Sepolia",
+      vaultAddress,
+      tokenAddress,
+      tokenSymbol: "USDC",
+      priceAtomic: "1000000",
+      bondAtomic: "0",
+      explorerUrl: "https://celo-sepolia.blockscout.com",
+    };
+  }
+  return {
+    chainId: 42220,
+    chainName: "Celo",
+    vaultAddress: process.env.IKENGA_VAULT_ADDRESS ?? celoDeploy.IkengaVault,
+    tokenAddress: process.env.IKENGA_TOKEN_ADDRESS ?? celoDeploy.token.USDT,
+    tokenSymbol: "USDT",
+    priceAtomic: "1000000",
+    bondAtomic: "0",
+    explorerUrl: "https://celoscan.io",
+  };
 }
 
 let ledgerSingleton: Ledger | null = null;
@@ -110,6 +194,17 @@ export function setLedgerForTests(ledger: Ledger): void {
   ledgerInit = Promise.resolve(ledger);
 }
 
+/** The escrow's on-chain state, read off the job's status. "released"
+ * (the 48h deadline release) has no job status of its own — the server
+ * never drives it — so it never comes out of this mapping yet. */
+function escrowStateFor(o: LedgerOrder): HireResult["escrowState"] {
+  if (!o.escrowAddress) return null;
+  if (o.status === "accepted") return "accepted";
+  if (o.status === "refunded" || o.status === "rejected") return "rejected";
+  if (o.status === "draft") return "unfunded";
+  return "funded"; // escrowed, in-progress, delivered
+}
+
 function orderToHire(o: LedgerOrder): HireResult {
   return {
     id: o.id,
@@ -123,6 +218,11 @@ function orderToHire(o: LedgerOrder): HireResult {
     cfoReason: o.cfoReason ?? "",
     decisionHash: o.decisionHash ?? "",
     createdAt: o.createdAt,
+    escrowAddress: o.escrowAddress ?? null,
+    fundTxHash: o.fundTxHash ?? null,
+    deliverableTxHash: o.deliverableTxHash ?? null,
+    settleTxHash: o.settleTxHash ?? null,
+    escrowState: escrowStateFor(o),
   };
 }
 
@@ -314,7 +414,12 @@ export async function createHire(input: HireInput): Promise<HireResult> {
     description: parsed.description,
     status: "draft",
     priceMicroUsdc: quote.priceUsdc * 1_000_000,
-    bondMicroUsdc: Math.round(quote.bondUsdc * 1_000_000),
+    // Bond is 0, always: the vault's BOND bucket holds no USDT, and
+    // JobEscrow.reject() with a bond above 0 and no locked bond REVERTS
+    // (it calls vault.payBond, which needs a locked bond) — so a bond
+    // would make refunds impossible. The CFO's priceJob still computes
+    // a bond for its expected-profit maths; it is not put up on-chain.
+    bondMicroUsdc: 0,
     cfoAccepted: quote.accepted,
     cfoReason: quote.reason,
     decisionHash,
@@ -335,11 +440,16 @@ export async function createHire(input: HireInput): Promise<HireResult> {
     customerWallet: parsed.customerWallet,
     status: "draft",
     priceUsdc: quote.priceUsdc,
-    bondUsdc: quote.bondUsdc,
+    bondUsdc: 0,
     cfoAccepted: quote.accepted,
     cfoReason: quote.reason,
     decisionHash: decision.hash,
     createdAt: new Date().toISOString(),
+    escrowAddress: null,
+    fundTxHash: null,
+    deliverableTxHash: null,
+    settleTxHash: null,
+    escrowState: null,
   };
   return hire;
 }

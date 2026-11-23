@@ -45,6 +45,33 @@ describe("MemoryLedger", () => {
   });
 });
 
+describe("MemoryLedger updateOrderEscrow", () => {
+  it("records the escrow address and tx hashes, patching only what is given", async () => {
+    const ledger = new MemoryLedger();
+    await ledger.createOrder({
+      id: "ord_esc_1",
+      jobType: "website",
+      customerWallet: "0x0000000000000000000000000000000000000001",
+      description: "Website for a Lagos bakery",
+      status: "draft",
+    });
+    expect((await ledger.getOrder("ord_esc_1"))?.escrowAddress).toBeUndefined();
+    const patched = await ledger.updateOrderEscrow("ord_esc_1", {
+      escrowAddress: "0x00000000000000000000000000000000000000aa",
+      fundTxHash: "0xfund",
+    });
+    expect(patched?.escrowAddress).toBe("0x00000000000000000000000000000000000000aa");
+    expect(patched?.fundTxHash).toBe("0xfund");
+    expect(patched?.settleTxHash).toBeUndefined();
+    // A second patch leaves the first fields alone.
+    const patched2 = await ledger.updateOrderEscrow("ord_esc_1", { settleTxHash: "0xsettle" });
+    expect(patched2?.escrowAddress).toBe("0x00000000000000000000000000000000000000aa");
+    expect(patched2?.fundTxHash).toBe("0xfund");
+    expect(patched2?.settleTxHash).toBe("0xsettle");
+    expect(await ledger.updateOrderEscrow("ord_missing", { escrowAddress: "0x00000000000000000000000000000000000000aa" })).toBeNull();
+  });
+});
+
 describe("PostgresLedger hire + report round-trip (pg-mem)", () => {
   it("stores the hire fields, updates status, and round-trips a report", async () => {
     const db = newDb();
@@ -151,6 +178,47 @@ describe("PostgresLedger (pg-mem)", () => {
     });
     expect(d.prevHash).toBe("0".repeat(64));
     expect((await ledger.listOrders()).map((o) => o.id)).toEqual(["ord_pg_1"]);
+    await pool.end();
+  });
+
+  it("round-trips the escrow fields through Postgres, patching only what is given", async () => {
+    const db = newDb();
+    const { Pool } = db.adapters.createPg();
+    const pool = new Pool();
+    const ledger = new PostgresLedger(pool as never);
+    await ledger.init();
+    await ledger.createOrder({
+      id: "ord_pg_esc",
+      jobType: "website",
+      customerWallet: "0x0000000000000000000000000000000000000002",
+      description: "Website",
+      status: "draft",
+    });
+    const fresh = await ledger.getOrder("ord_pg_esc");
+    expect(fresh?.escrowAddress).toBeNull();
+    expect(fresh?.fundTxHash).toBeNull();
+    expect(fresh?.deliverableTxHash).toBeNull();
+    expect(fresh?.settleTxHash).toBeNull();
+    const patched = await ledger.updateOrderEscrow("ord_pg_esc", {
+      escrowAddress: "0x00000000000000000000000000000000000000aa",
+      fundTxHash: "0xfund",
+    });
+    expect(patched?.escrowAddress).toBe("0x00000000000000000000000000000000000000aa");
+    expect(patched?.fundTxHash).toBe("0xfund");
+    expect(patched?.deliverableTxHash).toBeNull();
+    // A second patch leaves the first fields alone, and a fresh instance
+    // over the same database sees them (the serverless case).
+    await ledger.updateOrderEscrow("ord_pg_esc", {
+      deliverableTxHash: "0xdeliver",
+      settleTxHash: "0xsettle",
+    });
+    const second = new PostgresLedger(pool as never);
+    const back = await second.getOrder("ord_pg_esc");
+    expect(back?.escrowAddress).toBe("0x00000000000000000000000000000000000000aa");
+    expect(back?.fundTxHash).toBe("0xfund");
+    expect(back?.deliverableTxHash).toBe("0xdeliver");
+    expect(back?.settleTxHash).toBe("0xsettle");
+    expect(await ledger.updateOrderEscrow("ord_missing", { escrowAddress: "0x00000000000000000000000000000000000000aa" })).toBeNull();
     await pool.end();
   });
 

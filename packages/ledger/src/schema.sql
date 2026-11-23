@@ -21,6 +21,13 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS bond_micro_usdc BIGINT NOT NULL DEFA
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS cfo_accepted BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS cfo_reason TEXT NOT NULL DEFAULT '';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS decision_hash TEXT NOT NULL DEFAULT '';
+-- Escrow fields: each job deploys its own JobEscrow from the customer's
+-- browser, and the $1 moves only through it. Same IF NOT EXISTS pattern,
+-- so old databases pick them up on init.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS escrow_address TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS fund_tx_hash TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS deliverable_tx_hash TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS settle_tx_hash TEXT;
 
 CREATE TABLE IF NOT EXISTS decision_log (
   id TEXT PRIMARY KEY,

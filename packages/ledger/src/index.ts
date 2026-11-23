@@ -41,6 +41,14 @@ export interface LedgerOrder {
   cfoAccepted?: boolean;
   cfoReason?: string;
   decisionHash?: string;
+  /** The job's own JobEscrow contract, deployed from the customer's browser. Null until the escrow is registered. */
+  escrowAddress?: string | null;
+  /** Tx that paid the $1 into the escrow (fund()). */
+  fundTxHash?: string | null;
+  /** Tx that sealed the delivered work's hash on the escrow (submitDeliverable(), via the vault). */
+  deliverableTxHash?: string | null;
+  /** Tx that settled the escrow — the customer's accept() or reject(). */
+  settleTxHash?: string | null;
   createdAt: string;
 }
 
@@ -159,6 +167,9 @@ export interface Ledger {
   listOrders(): Promise<LedgerOrder[]>;
   /** Change an order's status (accept / reject / in-progress / delivered). */
   updateOrderStatus(id: string, status: string): Promise<LedgerOrder | null>;
+  /** Record escrow fields on an order (address and tx hashes). Only the
+   * fields present in the patch change; the rest are left alone. */
+  updateOrderEscrow(id: string, patch: { escrowAddress?: string; fundTxHash?: string; deliverableTxHash?: string; settleTxHash?: string }): Promise<LedgerOrder | null>;
   /** Save the delivered work (or the in-progress report state) for an order. */
   saveReport(orderId: string, report: StoredReportData): Promise<StoredReportData>;
   /** Read it back; null when nothing has been delivered or started yet. */
@@ -208,6 +219,19 @@ export class MemoryLedger implements Ledger {
     const order = this.orders.get(id);
     if (!order) return null;
     order.status = status;
+    return order;
+  }
+
+  async updateOrderEscrow(
+    id: string,
+    patch: { escrowAddress?: string; fundTxHash?: string; deliverableTxHash?: string; settleTxHash?: string },
+  ): Promise<LedgerOrder | null> {
+    const order = this.orders.get(id);
+    if (!order) return null;
+    if (patch.escrowAddress !== undefined) order.escrowAddress = patch.escrowAddress;
+    if (patch.fundTxHash !== undefined) order.fundTxHash = patch.fundTxHash;
+    if (patch.deliverableTxHash !== undefined) order.deliverableTxHash = patch.deliverableTxHash;
+    if (patch.settleTxHash !== undefined) order.settleTxHash = patch.settleTxHash;
     return order;
   }
 
@@ -297,17 +321,18 @@ export class PostgresLedger implements Ledger {
 
   async createOrder(order: Omit<LedgerOrder, "createdAt" | "priceMicroUsdc"> & { priceMicroUsdc?: number }): Promise<LedgerOrder> {
     const { rows } = await this.pool.query(
-      `INSERT INTO orders (id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, created_at`,
+      `INSERT INTO orders (id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, escrow_address, fund_tx_hash, deliverable_tx_hash, settle_tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING ${ORDER_COLS}`,
       [order.id, order.jobType, order.customerWallet, order.description, order.status, order.priceMicroUsdc ?? 1_000_000,
-       order.bondMicroUsdc ?? 100_000, order.cfoAccepted ?? true, order.cfoReason ?? "", order.decisionHash ?? ""],
+       order.bondMicroUsdc ?? 100_000, order.cfoAccepted ?? true, order.cfoReason ?? "", order.decisionHash ?? "",
+       order.escrowAddress ?? null, order.fundTxHash ?? null, order.deliverableTxHash ?? null, order.settleTxHash ?? null],
     );
     return rowToOrder(rows[0]);
   }
 
   async getOrder(id: string): Promise<LedgerOrder | null> {
     const { rows } = await this.pool.query(
-      `SELECT id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, created_at FROM orders WHERE id = $1`,
+      `SELECT ${ORDER_COLS} FROM orders WHERE id = $1`,
       [id],
     );
     return rows.length === 0 ? null : rowToOrder(rows[0]);
@@ -315,7 +340,7 @@ export class PostgresLedger implements Ledger {
 
   async listOrders(): Promise<LedgerOrder[]> {
     const { rows } = await this.pool.query(
-      `SELECT id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, created_at FROM orders ORDER BY created_at ASC`,
+      `SELECT ${ORDER_COLS} FROM orders ORDER BY created_at ASC`,
     );
     return rows.map(rowToOrder);
   }
@@ -323,8 +348,35 @@ export class PostgresLedger implements Ledger {
   async updateOrderStatus(id: string, status: string): Promise<LedgerOrder | null> {
     const { rows } = await this.pool.query(
       `UPDATE orders SET status = $2 WHERE id = $1
-       RETURNING id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, created_at`,
+       RETURNING ${ORDER_COLS}`,
       [id, status],
+    );
+    return rows.length === 0 ? null : rowToOrder(rows[0]);
+  }
+
+  async updateOrderEscrow(
+    id: string,
+    patch: { escrowAddress?: string; fundTxHash?: string; deliverableTxHash?: string; settleTxHash?: string },
+  ): Promise<LedgerOrder | null> {
+    // Only the fields present in the patch change; the rest are left alone.
+    const sets: string[] = [];
+    const values: (string | null)[] = [id];
+    const columns: [string, string | undefined][] = [
+      ["escrow_address", patch.escrowAddress],
+      ["fund_tx_hash", patch.fundTxHash],
+      ["deliverable_tx_hash", patch.deliverableTxHash],
+      ["settle_tx_hash", patch.settleTxHash],
+    ];
+    for (const [column, value] of columns) {
+      if (value !== undefined) {
+        values.push(value);
+        sets.push(`${column} = $${values.length}`);
+      }
+    }
+    if (sets.length === 0) return this.getOrder(id);
+    const { rows } = await this.pool.query(
+      `UPDATE orders SET ${sets.join(", ")} WHERE id = $1 RETURNING ${ORDER_COLS}`,
+      values,
     );
     return rows.length === 0 ? null : rowToOrder(rows[0]);
   }
@@ -466,6 +518,11 @@ export class PostgresLedger implements Ledger {
   }
 }
 
+/** Every column of the orders table, in one place, so the SELECTs and
+ * RETURNINGs in PostgresLedger can't drift out of sync with rowToOrder. */
+const ORDER_COLS =
+  "id, job_type, customer_wallet, description, status, price_micro_usdc, bond_micro_usdc, cfo_accepted, cfo_reason, decision_hash, escrow_address, fund_tx_hash, deliverable_tx_hash, settle_tx_hash, created_at";
+
 function rowToOrder(r: Record<string, unknown>): LedgerOrder {
   return {
     id: String(r.id),
@@ -478,6 +535,10 @@ function rowToOrder(r: Record<string, unknown>): LedgerOrder {
     cfoAccepted: r.cfo_accepted === null || r.cfo_accepted === undefined ? undefined : Boolean(r.cfo_accepted),
     cfoReason: r.cfo_reason === null || r.cfo_reason === undefined ? undefined : String(r.cfo_reason),
     decisionHash: r.decision_hash === null || r.decision_hash === undefined ? undefined : String(r.decision_hash),
+    escrowAddress: r.escrow_address === null || r.escrow_address === undefined ? null : String(r.escrow_address),
+    fundTxHash: r.fund_tx_hash === null || r.fund_tx_hash === undefined ? null : String(r.fund_tx_hash),
+    deliverableTxHash: r.deliverable_tx_hash === null || r.deliverable_tx_hash === undefined ? null : String(r.deliverable_tx_hash),
+    settleTxHash: r.settle_tx_hash === null || r.settle_tx_hash === undefined ? null : String(r.settle_tx_hash),
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   };
 }

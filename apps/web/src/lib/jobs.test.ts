@@ -8,6 +8,7 @@ import {
   deliveryStageLabel,
   emptyStoredCreative,
   ESTIMATED_TOOL_COST_USDC,
+  getChainConfig,
   getHire,
   getReport,
   HireInputSchema,
@@ -41,6 +42,120 @@ describe("HireInputSchema", () => {
   });
 });
 
+describe("getChainConfig", () => {
+  const ENV_KEYS = ["IKENGA_CHAIN", "IKENGA_VAULT_ADDRESS", "IKENGA_TOKEN_ADDRESS"] as const;
+  const saved: Record<string, string | undefined> = {};
+  const setEnv = (values: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>) => {
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key];
+      if (values[key] === undefined) delete process.env[key];
+      else process.env[key] = values[key];
+    }
+  };
+  const restoreEnv = () => {
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  };
+
+  it("defaults to Celo mainnet, from contracts/deployments/celo.json", () => {
+    setEnv({ IKENGA_CHAIN: undefined, IKENGA_VAULT_ADDRESS: undefined, IKENGA_TOKEN_ADDRESS: undefined });
+    try {
+      expect(getChainConfig()).toEqual({
+        chainId: 42220,
+        chainName: "Celo",
+        vaultAddress: "0x1C2b2E64527B0bA7795ed3CDF7d76da51D24018B",
+        tokenAddress: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+        tokenSymbol: "USDT",
+        priceAtomic: "1000000",
+        bondAtomic: "0",
+        explorerUrl: "https://celoscan.io",
+      });
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("lets env override the mainnet vault and token", () => {
+    setEnv({
+      IKENGA_CHAIN: "mainnet",
+      IKENGA_VAULT_ADDRESS: "0x00000000000000000000000000000000000000aa",
+      IKENGA_TOKEN_ADDRESS: "0x00000000000000000000000000000000000000bb",
+    });
+    try {
+      const config = getChainConfig();
+      expect(config.vaultAddress).toBe("0x00000000000000000000000000000000000000aa");
+      expect(config.tokenAddress).toBe("0x00000000000000000000000000000000000000bb");
+      expect(config.chainId).toBe(42220);
+      expect(config.tokenSymbol).toBe("USDT");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("reads Sepolia config from env, and refuses to guess without it", () => {
+    setEnv({
+      IKENGA_CHAIN: "sepolia",
+      IKENGA_VAULT_ADDRESS: "0x1A6d11A97e83f563bdA7811413097212362e0EcD",
+      IKENGA_TOKEN_ADDRESS: "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+    });
+    try {
+      expect(getChainConfig()).toEqual({
+        chainId: 11142220,
+        chainName: "Celo Sepolia",
+        vaultAddress: "0x1A6d11A97e83f563bdA7811413097212362e0EcD",
+        tokenAddress: "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+        tokenSymbol: "USDC",
+        priceAtomic: "1000000",
+        bondAtomic: "0",
+        explorerUrl: "https://celo-sepolia.blockscout.com",
+      });
+    } finally {
+      restoreEnv();
+    }
+    setEnv({ IKENGA_CHAIN: "sepolia", IKENGA_VAULT_ADDRESS: undefined, IKENGA_TOKEN_ADDRESS: undefined });
+    try {
+      expect(() => getChainConfig()).toThrow(/IKENGA_VAULT_ADDRESS/);
+    } finally {
+      restoreEnv();
+    }
+    setEnv({ IKENGA_CHAIN: "nowhere" });
+    try {
+      expect(() => getChainConfig()).toThrow(/IKENGA_CHAIN/);
+    } finally {
+      restoreEnv();
+    }
+  });
+});
+
+describe("escrowState on the hire", () => {
+  it("follows the job: unfunded once registered, funded once paid, settled once decided", async () => {
+    const ledger = new MemoryLedger();
+    setLedgerForTests(ledger);
+    try {
+      const hire = await createHire({
+        jobType: "flyers",
+        description: "Flyers for a market stall",
+        customerWallet: "0x0000000000000000000000000000000000000002",
+      });
+      expect((await getHire(hire.id))?.escrowState).toBeNull();
+      await ledger.updateOrderEscrow(hire.id, { escrowAddress: "0x00000000000000000000000000000000000000aa" });
+      expect((await getHire(hire.id))?.escrowState).toBe("unfunded");
+      await setHireStatus(hire.id, "escrowed");
+      expect((await getHire(hire.id))?.escrowState).toBe("funded");
+      await setHireStatus(hire.id, "in-progress");
+      expect((await getHire(hire.id))?.escrowState).toBe("funded");
+      await setHireStatus(hire.id, "accepted");
+      expect((await getHire(hire.id))?.escrowState).toBe("accepted");
+      await setHireStatus(hire.id, "refunded");
+      expect((await getHire(hire.id))?.escrowState).toBe("rejected");
+    } finally {
+      setLedgerForTests(new MemoryLedger());
+    }
+  });
+});
+
 describe("createHire (Step 1 hire flow)", () => {
   it("creates a $1 draft order with a CFO quote and a decision hash", async () => {
     const before = (await listHires()).length;
@@ -51,7 +166,13 @@ describe("createHire (Step 1 hire flow)", () => {
     });
     expect(hire.status).toBe("draft");
     expect(hire.priceUsdc).toBe(1);
-    expect(hire.bondUsdc).toBeGreaterThan(0);
+    // The bond is 0: the vault's BOND bucket holds no USDT, and a bond
+    // above 0 would make JobEscrow.reject() revert (no locked bond to
+    // pay), so refunds would be impossible.
+    expect(hire.bondUsdc).toBe(0);
+    expect(hire.escrowAddress).toBeNull();
+    expect(hire.fundTxHash).toBeNull();
+    expect(hire.escrowState).toBeNull();
     expect(hire.cfoAccepted).toBe(true);
     expect(hire.decisionHash).toMatch(/^[0-9a-f]{64}$/);
     expect((await listHires()).length).toBe(before + 1);
@@ -108,7 +229,7 @@ describe.skipIf(!PG_URL)("Postgres hire/report round-trip (gated: IKENGA_TEST_DA
       const found = await getHire(hire.id);
       expect(found?.description).toBe("Compare payment options for my shop");
       expect(found?.priceUsdc).toBe(1);
-      expect(found?.bondUsdc).toBeGreaterThan(0);
+      expect(found?.bondUsdc).toBe(0);
       expect(found?.cfoAccepted).toBe(true);
       expect(found?.decisionHash).toMatch(/^[0-9a-f]{64}$/);
       const report = await getReport(hire.id);

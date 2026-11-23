@@ -252,6 +252,20 @@ export {
   type VerifyFailureReason,
   type VerifyPaymentResult,
 } from "./x402.js";
+export { deliverableHashFor, type DeliverableContent } from "./deliverable.js";
+export {
+  CELO_MAINNET_RPC_URL,
+  CELO_SEPOLIA_RPC_URL_DEFAULT,
+  createEscrowClient,
+  escrowChain,
+  escrowRpcUrl,
+  readEscrowDeliverableHash,
+  readEscrowOnchain,
+  verifyTxReceipt,
+  type EscrowOnchain,
+  type EscrowReadOptions,
+  type TxReceiptCheck,
+} from "./escrow.js";
 export {
   CELO_RPC_URL,
   CELO_SEPOLIA_RPC_URL,

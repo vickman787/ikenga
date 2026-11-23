@@ -4,13 +4,30 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { JOB_LABELS, type JobType } from "@ikenga/shared";
 import Slideshow from "@/components/Slideshow";
+import { PayPanel } from "@/components/HireForm";
+import {
+  acceptJob,
+  connectInjected,
+  ensureChain,
+  explorerAddressUrl,
+  explorerTxUrl,
+  fetchChainConfig,
+  rejectJob,
+  shortAddress,
+  type Address,
+  type ChainConfig,
+} from "@/lib/contracts";
 
 /**
  * Job page — a hired job gets its own page, where you can watch the team
  * work, step by step. It reads the real /api/jobs/[id] record: the $1
- * quote, the bond the CFO puts up, and the decisions the CFO made. No
- * money moves here yet — escrow is not switched on, and the page says so
- * in plain words.
+ * quote, the escrow, and the decisions the CFO made.
+ *
+ * Money moves here, from the customer's own wallet: a job in "draft" shows
+ * the pay panel (connect wallet, set up the job's escrow, pay $1 in) and
+ * the work only starts once the job is "escrowed". A delivered job is
+ * accepted or turned down on the chain first — the $1 goes to Ikenga, or
+ * back to the wallet that paid — and only then is the decision saved.
  *
  * All four jobs are delivered here: the market report (words + sources),
  * the website and the flyers (a real page built from the brief, shown
@@ -31,6 +48,13 @@ interface JobDetail {
     cfoReason: string;
     decisionHash: string;
     createdAt: string;
+    // Added by the escrow work: null until the customer pays. The server
+    // may not send these yet — every use below treats them as optional.
+    escrowAddress?: string | null;
+    fundTxHash?: string | null;
+    deliverableTxHash?: string | null;
+    settleTxHash?: string | null;
+    escrowState?: "unfunded" | "funded" | "accepted" | "rejected" | "released" | null;
   };
   report: {
     report: string;
@@ -178,6 +202,10 @@ export default function JobPage() {
   const [revisionNote, setRevisionNote] = useState("");
   const [showRevise, setShowRevise] = useState(false);
   const [decisionMsg, setDecisionMsg] = useState<string | null>(null);
+  const [decisionTxHash, setDecisionTxHash] = useState<string | null>(null);
+  const [deciding, setDeciding] = useState(false);
+  const [account, setAccount] = useState<Address | null>(null);
+  const [chain, setChain] = useState<ChainConfig | null>(null);
   // The latest job data, for the stage driver (refs do not go stale).
   const dataRef = useRef<JobDetail | null>(null);
   // True while this page is driving the stages — the poller must not
@@ -194,6 +222,10 @@ export default function JobPage() {
 
   useEffect(() => {
     reload().catch((e: Error) => setError(e.message));
+    // The payment details (chain, vault, token, explorer) come from the
+    // server. If that route is not there yet, the page still works — the
+    // explorer links just stay hidden until it is.
+    fetchChainConfig().then(setChain).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -258,24 +290,71 @@ export default function JobPage() {
     }
   }
 
+  /**
+   * Accept or turn down the delivered work. The money moves on the chain
+   * FIRST, from the wallet that paid — only that wallet can accept or turn
+   * a job down — and only then is the decision saved with the transaction
+   * hash. A different wallet is refused in plain words, and nothing is
+   * saved without a transaction hash.
+   */
   async function decide(action: "accept" | "reject") {
     setDecisionMsg(null);
-    const res = await fetch(`/api/jobs/${id}/decision`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
-    const d = await res.json();
-    if (!res.ok) {
-      setDecisionMsg(d.error ?? "Could not record that");
-      return;
+    setDecisionTxHash(null);
+    setDeciding(true);
+    try {
+      // Always ask the wallet which account is selected right now — the
+      // customer may have switched accounts since connecting.
+      const acct = await connectInjected();
+      setAccount(acct);
+      if (acct.toLowerCase() !== dataRef.current?.job.customerWallet.toLowerCase()) {
+        throw new Error(
+          `That wallet (${shortAddress(acct)}) did not pay for this job. Only the wallet that paid (${shortAddress(dataRef.current?.job.customerWallet ?? "")}) can accept or turn it down.`,
+        );
+      }
+      const cfg = chain ?? (await fetchChainConfig());
+      setChain(cfg);
+      await ensureChain(cfg.chainId);
+      const escrowAddress = dataRef.current?.job.escrowAddress;
+      if (!escrowAddress) {
+        throw new Error(
+          "This job has no escrow saved yet. Pay the $1 into escrow first, then decide.",
+        );
+      }
+      setDecisionMsg(
+        action === "accept"
+          ? "Sending your acceptance to the chain…"
+          : "Sending your refund to the chain…",
+      );
+      const { txHash } =
+        action === "accept"
+          ? await acceptJob({ account: acct, chain: cfg, escrowAddress: escrowAddress as Address })
+          : await rejectJob({ account: acct, chain: cfg, escrowAddress: escrowAddress as Address });
+      setDecisionTxHash(txHash);
+      const res = await fetch(`/api/jobs/${id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, txHash }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          d.error ??
+            "The money moved on the chain, but we could not save the decision. Tell us and we will sort it out.",
+        );
+      }
+      setDecisionMsg(
+        action === "accept"
+          ? "Accepted — thank you. The $1 in escrow goes to Ikenga."
+          : "Turned down — your $1 is on its way back to your wallet.",
+      );
+      await reload();
+    } catch (e) {
+      setDecisionMsg(
+        e instanceof Error ? e.message : "Could not record that",
+      );
+    } finally {
+      setDeciding(false);
     }
-    setDecisionMsg(
-      action === "accept"
-        ? "Accepted — thank you. The team is paid from escrow once money moves."
-        : "Turned down — you get your $1 back, plus the bond the CFO put up.",
-    );
-    await reload();
   }
 
   return (
@@ -302,8 +381,60 @@ export default function JobPage() {
             {data.job.description}
           </p>
           <div className="card pad" style={{ marginTop: 24, display: "grid", gap: 12 }}>
-            <p><b>Price:</b> ${data.job.priceUsdc} · <b>Bond the CFO puts up:</b> ${data.job.bondUsdc}</p>
+            <p><b>Price:</b> ${data.job.priceUsdc}</p>
             <p><b>Paying wallet:</b> <span className="mono" style={{ fontSize: 13, wordBreak: "break-all" }}>{data.job.customerWallet}</span></p>
+            {data.job.escrowAddress ? (
+              <p>
+                <b>Your $1:</b> {data.job.escrowState === "accepted"
+                  ? "paid to Ikenga — you accepted the work"
+                  : data.job.escrowState === "rejected"
+                    ? "refunded — you turned the work down"
+                    : data.job.escrowState === "funded"
+                      ? "in escrow"
+                      : "escrow set up, waiting for your $1"}{" "}
+                {chain && (
+                  <a
+                    href={explorerAddressUrl(chain, data.job.escrowAddress)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mono"
+                    style={{ fontSize: 12, wordBreak: "break-all" }}
+                  >
+                    See the escrow on the chain →
+                  </a>
+                )}
+              </p>
+            ) : (
+              <p><b>Your $1:</b> not paid yet — pay below and the team can start.</p>
+            )}
+            {data.job.fundTxHash && chain && (
+              <p>
+                <b>$1 payment:</b>{" "}
+                <a
+                  href={explorerTxUrl(chain, data.job.fundTxHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mono"
+                  style={{ fontSize: 12, wordBreak: "break-all" }}
+                >
+                  See it on the chain →
+                </a>
+              </p>
+            )}
+            {(data.job.settleTxHash ?? decisionTxHash) && chain && (
+              <p>
+                <b>Settled:</b>{" "}
+                <a
+                  href={explorerTxUrl(chain, (data.job.settleTxHash ?? decisionTxHash) as string)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mono"
+                  style={{ fontSize: 12, wordBreak: "break-all" }}
+                >
+                  See it on the chain →
+                </a>
+              </p>
+            )}
             <p><b>The CFO says:</b> {data.job.cfoReason}</p>
             <p className="mono" style={{ fontSize: 12, color: "var(--muted)", wordBreak: "break-all" }}>
               The CFO&apos;s decision, written down: {data.job.decisionHash}
@@ -319,13 +450,26 @@ export default function JobPage() {
                 <p style={{ color: "var(--ink-2)", lineHeight: 1.6 }}>
                   {NOT_STARTED_BLURB[data.job.jobType]}
                 </p>
-                <button onClick={() => startWork()} disabled={running} className="btn leaf lg" style={{ marginTop: 16 }}>
-                  {running ? "The team is working…" : "Start the work →"}
-                </button>
-                {runError && <p className="error" style={{ marginTop: 12 }}>{runError}</p>}
+                {data.job.status === "draft" ? (
+                  <PayPanel
+                    jobId={data.job.id}
+                    description={data.job.description}
+                    customerWallet={data.job.customerWallet}
+                    account={account}
+                    onPaid={() => reload().catch(() => {})}
+                  />
+                ) : (
+                  <>
+                    <button onClick={() => startWork()} disabled={running} className="btn leaf lg" style={{ marginTop: 16 }}>
+                      {running ? "The team is working…" : "Start the work →"}
+                    </button>
+                    {runError && <p className="error" style={{ marginTop: 12 }}>{runError}</p>}
+                  </>
+                )}
                 <p style={{ marginTop: 12, fontSize: 13, color: "var(--muted)" }}>
-                  {COST_BLURB[data.job.jobType]} No money moves
-                  on this job yet — the escrow is not switched on.
+                  {COST_BLURB[data.job.jobType]} Your $1 is held in escrow
+                  until you accept the work — turn it down and it comes
+                  back to your wallet.
                 </p>
               </div>
             )}
@@ -429,11 +573,24 @@ export default function JobPage() {
                 {data.job.status === "delivered" && (
                   <div className="card pad" style={{ marginTop: 16 }}>
                     <h3 style={{ fontSize: 18 }}>What do you think?</h3>
+                    <p style={{ marginTop: 6, fontSize: 13, color: "var(--ink-2)", lineHeight: 1.6 }}>
+                      Accepting sends the $1 in escrow to Ikenga. Turning it
+                      down sends the $1 back to the wallet that paid. Either
+                      way, your wallet will ask you to confirm — only the
+                      wallet that paid can decide.
+                    </p>
                     <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-                      <button onClick={() => decide("accept")} className="btn leaf">Accept the work ✓</button>
-                      <button onClick={() => setShowRevise((v) => !v)} className="btn">Ask for one free revision</button>
-                      <button onClick={() => decide("reject")} className="btn">Turn it down — refund + bond</button>
+                      <button onClick={() => decide("accept")} disabled={deciding} className="btn leaf">Accept the work ✓</button>
+                      {(data.report.revisions ?? 0) < 1 ? (
+                        <button onClick={() => setShowRevise((v) => !v)} disabled={deciding} className="btn">Ask for one free revision</button>
+                      ) : (
+                        <span style={{ fontSize: 13, color: "var(--muted)", alignSelf: "center" }}>
+                          You used your one free revision.
+                        </span>
+                      )}
+                      <button onClick={() => decide("reject")} disabled={deciding} className="btn">Turn it down — get your $1 back</button>
                     </div>
+                    {deciding && <p style={{ marginTop: 12, color: "var(--ink-2)" }}>Waiting for your wallet…</p>}
                     {showRevise && (
                       <div style={{ marginTop: 14 }}>
                         <label className="field" htmlFor="revision-note">What should change?</label>
@@ -452,10 +609,36 @@ export default function JobPage() {
                       </div>
                     )}
                     {decisionMsg && <p style={{ marginTop: 12, color: "var(--ink-2)" }}>{decisionMsg}</p>}
+                    {decisionTxHash && chain && (
+                      <p style={{ marginTop: 8 }}>
+                        <a
+                          href={explorerTxUrl(chain, decisionTxHash)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mono"
+                          style={{ fontSize: 12, wordBreak: "break-all" }}
+                        >
+                          See it on the chain →
+                        </a>
+                      </p>
+                    )}
                   </div>
                 )}
                 {data.job.status !== "delivered" && decisionMsg && (
                   <p style={{ marginTop: 16, color: "var(--ink-2)" }}>{decisionMsg}</p>
+                )}
+                {data.job.status !== "delivered" && decisionTxHash && chain && (
+                  <p style={{ marginTop: 8 }}>
+                    <a
+                      href={explorerTxUrl(chain, decisionTxHash)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mono"
+                      style={{ fontSize: 12, wordBreak: "break-all" }}
+                    >
+                      See it on the chain →
+                    </a>
+                  </p>
                 )}
               </>
             )}
@@ -474,9 +657,13 @@ export default function JobPage() {
             ))}
           </div>
           <p className="note" style={{ marginTop: 24 }}>
-            No money has moved on this job yet. The escrow and vault are
-            built but not switched on, so this is a price and a written
-            record — not money in escrow.
+            {data.job.status === "draft"
+              ? "Your $1 is not paid yet. Pay it into escrow above and the team can start."
+              : data.job.escrowState === "accepted"
+                ? "Settled: you accepted the work and the $1 in escrow went to Ikenga."
+                : data.job.escrowState === "rejected"
+                  ? "Settled: you turned the work down and the $1 went back to your wallet."
+                  : "Your $1 is held in escrow until you accept the work — turn it down and it comes back to your wallet."}
           </p>
         </>
       )}

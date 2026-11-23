@@ -6,7 +6,7 @@ export async function GET() {
     jobs: await listHires(),
     backend: ledgerBackend(),
     demo: ledgerBackend() === "memory",
-    note: "Step 3: hires live in Postgres when DATABASE_URL is set, otherwise in memory. No money moves in this route.",
+    note: "Step 3: hires live in Postgres when DATABASE_URL is set, otherwise in memory. The $1 for a job goes into its own escrow contract first: the browser deploys the escrow, posts it here, then pays the $1 in — only then does the team start. Accepting the work releases the $1 to the team; turning it down sends it back.",
   });
 }
 
