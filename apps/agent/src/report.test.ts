@@ -20,7 +20,7 @@ const SOURCES = [
 ];
 
 describe("runMarketReport (fake models + fake search)", () => {
-  it("runs Scout → Researcher → Writer → Analyst → Auditor, in order, and delivers", async () => {
+  it("runs Scout → Reader → Researcher → Writer → Analyst → Auditor → Messenger, in order, and delivers", async () => {
     const { chat, calls } = fakeChat({
       "You are Researcher": "Plan: compare Paystack and Flutterwave on fees and reach.",
       "You are Writer": "# Payment options in Nigeria\n\nPaystack charges 1.5% per local transaction. Flutterwave was founded in 2016.\n\nSources:\n1. Paystack\n2. Flutterwave",
@@ -43,7 +43,17 @@ describe("runMarketReport (fake models + fake search)", () => {
     expect(result.sources.length).toBeGreaterThan(0);
     expect(result.sources.every((s) => s.url.startsWith("https://"))).toBe(true);
     const agents = result.steps.map((s) => s.agent);
-    expect(agents).toEqual(["Scout", "Researcher", "Writer", "Analyst", "Auditor", "Auditor"]);
+    expect(agents).toEqual(["Scout", "Reader", "Researcher", "Writer", "Analyst", "Auditor", "Auditor", "Messenger"]);
+    // Messenger's receipt carries the deliverable's fingerprint — the
+    // same hash the boss seals on the escrow before the customer can accept.
+    const messenger = result.steps.find((s) => s.agent === "Messenger");
+    expect(messenger).toBeDefined();
+    const { deliverableHashFor } = await import("@ikenga/payments");
+    expect(messenger!.detail).toContain(deliverableHashFor({ report: result.report }));
+    // Reader is its own step: it reads the pages Scout found.
+    const reader = result.steps.find((s) => s.agent === "Reader");
+    expect(reader).toBeDefined();
+    expect(reader!.what).toMatch(/Read \d+ pages?/);
     // Auditor runs on a different model from the Writer.
     const writerModel = calls.find((c) => c.prompt.includes("You are Writer"))?.model;
     const auditorModel = calls.find((c) => c.prompt.includes("You are Auditor"))?.model;
@@ -78,6 +88,36 @@ describe("runMarketReport (fake models + fake search)", () => {
     expect(writerCalls).toBe(2);
   });
 
+  it("Reader reads the pages Scout found, and only keeps the ones that mention the brief", async () => {
+    const { chat } = fakeChat({
+      "You are Researcher": "Plan: compare the two.",
+      "You are Writer": "# Report\n\nPaystack charges 1.5%.",
+      "You are Analyst": "ALL NUMBERS CHECK OUT",
+      "checking the facts": "FACTS_OK\nAll facts check out.",
+      "final read": "PASS\nGood.",
+    });
+    const result = await runMarketReport(
+      { brief: "Compare payment options for my shop in Lagos" },
+      {
+        chat,
+        search: async () => [
+          { title: "Paystack", url: "https://example.com/paystack" },
+          { title: "Unrelated", url: "https://example.com/unrelated" },
+        ],
+        searchBing: async () => [],
+        wiki: async () => [],
+        fetchPage: async (url: string) => (url.includes("paystack") ? SOURCES[0] : null),
+      },
+    );
+    expect(result.status).toBe("delivered");
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0].url).toContain("paystack");
+    const scout = result.steps.find((s) => s.agent === "Scout");
+    expect(scout!.what).toMatch(/found 2 pages to read/);
+    const reader = result.steps.find((s) => s.agent === "Reader");
+    expect(reader!.what).toMatch(/Read 1 page/);
+  });
+
   it("refuses honestly when Scout finds nothing readable", async () => {
     const { chat } = fakeChat({ default: "unused" });
     const result = await runMarketReport(
@@ -86,7 +126,7 @@ describe("runMarketReport (fake models + fake search)", () => {
     );
     expect(result.status).toBe("refused");
     expect(result.report).toBe("");
-    expect(result.reason).toMatch(/could not find anything readable/);
+    expect(result.reason).toMatch(/could find anything readable/);
     expect(result.steps[0].agent).toBe("Scout");
   });
 
@@ -108,7 +148,7 @@ describe("runReportStage (chunked, one stage per call)", () => {
     };
   };
 
-  it("runs Scout → write → check → audit, one stage per call, and delivers", async () => {
+  it("runs Scout → Reader → write → check → audit, one stage per call, and delivers", async () => {
     const { emptyReportProgress, runReportStage } = await import("./report.js");
     let p = emptyReportProgress("Compare payment options for my shop in Lagos");
     expect(p.stage).toBe(1);
@@ -120,22 +160,22 @@ describe("runReportStage (chunked, one stage per call)", () => {
       p = JSON.parse(JSON.stringify(p)) as typeof p;
       p = await runReportStage(p, stageDeps());
     }
-    expect(stages).toEqual([1, 2, 3, 4, 5]);
+    expect(stages).toEqual([1, 2, 3, 4, 5, 6]);
     expect(p.status).toBe("delivered");
     expect(p.stage).toBe(0);
     expect(p.report).toContain("Paystack charges 1.5%");
-    expect(p.steps.map((s) => s.agent)).toEqual(["Scout", "Researcher", "Writer", "Analyst", "Auditor", "Auditor"]);
+    expect(p.steps.map((s) => s.agent)).toEqual(["Scout", "Reader", "Researcher", "Writer", "Analyst", "Auditor", "Auditor", "Messenger"]);
     expect(p.totalCostUsd).toBeLessThan(REPORT_MODEL_BUDGET_USD);
   });
 
-  it("a revision re-runs the write and audit stages, reusing Scout's pages", async () => {
+  it("a revision re-runs the write and audit stages, reusing Reader's pages", async () => {
     const { emptyReportProgress, revisionProgress, runReportStage } = await import("./report.js");
     const deps = stageDeps();
     let p = emptyReportProgress("Compare payment options");
     while (p.status === "in-progress" && p.stage !== 0) p = await runReportStage(p, deps);
     expect(p.status).toBe("delivered");
     const revised = revisionProgress(p, "Add the prices for each option");
-    expect(revised.stage).toBe(2);
+    expect(revised.stage).toBe(3);
     expect(revised.pages.length).toBeGreaterThan(0);
     expect(revised.steps).toHaveLength(0);
     let q = revised;
@@ -144,21 +184,27 @@ describe("runReportStage (chunked, one stage per call)", () => {
       stages.push(q.stage);
       q = await runReportStage(q, deps);
     }
-    // No new Scout stage: the pages were reused.
-    expect(stages).toEqual([2, 3, 4, 5]);
+    // No new Scout or Reader stage: the pages were reused.
+    expect(stages).toEqual([3, 4, 5, 6]);
     expect(q.status).toBe("delivered");
     expect(q.revisions).toBe(0);
   });
 
-  it("refuses at the Scout stage when nothing readable is found", async () => {
+  it("refuses at the Reader stage when nothing readable is found", async () => {
     const { emptyReportProgress, runReportStage } = await import("./report.js");
-    const p = await runReportStage(emptyReportProgress("asdfqwer zxcv"), {
+    const deps = {
       chat: fakeChat({ default: "unused" }).chat,
       search: async () => [], searchBing: async () => [], wiki: async () => [], fetchPage: async () => null,
-    });
+    };
+    // Scout runs first and finds nothing to read; Reader then runs and
+    // finds nothing readable either, so the run refuses there.
+    let p = await runReportStage(emptyReportProgress("asdfqwer zxcv"), deps);
+    expect(p.status).toBe("in-progress");
+    expect(p.stage).toBe(2);
+    p = await runReportStage(p, deps);
     expect(p.status).toBe("refused");
     expect(p.stage).toBe(0);
-    expect(p.reason).toMatch(/could not find anything readable/);
+    expect(p.reason).toMatch(/could find anything readable/);
   });
 });
 

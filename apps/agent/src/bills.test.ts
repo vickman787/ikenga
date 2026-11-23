@@ -101,6 +101,10 @@ function fakeRuntime(overrides: {
   cngn?: bigint;
   celo?: bigint;
   swapThrows?: string;
+  /** The swap/payout contracts have no code onchain. */
+  codeAtNoCode?: boolean;
+  /** The chain cannot be read at all. */
+  codeAtThrows?: boolean;
 } = {}): { rt: BillRuntime; state: FakeState } {
   const state: FakeState = { updates: [], tagged: [], raw: [], firmQuotes: 0, cancels: [], swapReceipt: { status: "success" } };
   const preview = overrides.previewRate ?? { buyAmount: "5000000000", takerPays: "3462600" };
@@ -123,6 +127,10 @@ function fakeRuntime(overrides: {
     usdtBalanceOf: async () => overrides.usdt ?? 10_000_000n,
     cngnBalanceOf: async () => overrides.cngn ?? 10_000_000_000n,
     celoBalanceOf: async () => overrides.celo ?? 1_000_000_000_000_000_000n,
+    codeAt: async () => {
+      if (overrides.codeAtThrows) throw new Error("RPC down");
+      return overrides.codeAtNoCode ? "0x" : "0x60806040";
+    },
     getAllowance: async () => 0n,
     waitForReceipt: async () => ({ status: "success" as const }),
     getReceipt: async () => state.swapReceipt,
@@ -378,5 +386,54 @@ describe("processBills", () => {
     expect(res.checked).toBe(0);
     const capped = await processBills([fakeBill(), fakeBill({ id: "bill_test_2" })], rt, 0);
     expect(capped.checked).toBe(0);
+  });
+});
+
+describe("Investigator checks in the bill pipeline", () => {
+  it("checks the swap contracts and the payout before money moves, and writes both receipts", async () => {
+    const { rt, state } = fakeRuntime();
+    const res = await processBills([fundedBill()], rt, 10);
+    expect(res.paid).toBe(1);
+    const checked = state.updates.filter((u) => u.update.event?.kind === "checked");
+    expect(checked).toHaveLength(2);
+    expect(checked[0].update.event?.reason).toContain("Investigator checked the swap contracts");
+    expect(checked[1].update.event?.reason).toContain("Investigator checked the supplier payout");
+    // The receipts land before the money moves.
+    const kinds = state.updates.map((u) => u.update.event?.kind);
+    expect(kinds.indexOf("checked")).toBeLessThan(kinds.indexOf("swap"));
+    expect(kinds.lastIndexOf("checked")).toBeLessThan(kinds.indexOf("payout"));
+  });
+
+  it("fails the bill when a swap contract has no code, and nothing moves", async () => {
+    const { rt, state } = fakeRuntime({ codeAtNoCode: true });
+    const res = await processBills([fundedBill()], rt, 10);
+    expect(res.failed).toBe(1);
+    expect(state.raw).toHaveLength(0);
+    expect(state.tagged).toHaveLength(0);
+    const failed = state.updates.find((u) => u.update.event?.kind === "failed");
+    expect(failed?.update.patch).toMatchObject({ status: "failed" });
+    expect(String(failed?.update.event?.reason)).toContain("Investigator");
+  });
+
+  it("waits when the chain cannot be read, and nothing moves", async () => {
+    const { rt, state } = fakeRuntime({ codeAtThrows: true });
+    const res = await processBills([fundedBill()], rt, 10);
+    expect(res.waiting).toBe(1);
+    expect(res.failed).toBe(0);
+    expect(state.raw).toHaveLength(0);
+    expect(state.tagged).toHaveLength(0);
+  });
+
+  it("fails the payout when the supplier is the zero address — after the swap, before any cNGN moves", async () => {
+    const { rt, state } = fakeRuntime();
+    const res = await processBills([fundedBill({ supplierWallet: "0x0000000000000000000000000000000000000000" })], rt, 10);
+    expect(res.failed).toBe(1);
+    expect(res.paid).toBe(0);
+    // The swap went through (approval + swap), the payout never did.
+    expect(state.raw).toHaveLength(1);
+    expect(state.tagged).toHaveLength(1);
+    expect(state.updates.some((u) => u.update.event?.kind === "payout")).toBe(false);
+    const failed = state.updates.find((u) => u.update.event?.kind === "failed");
+    expect(String(failed?.update.event?.reason)).toContain("zero address");
   });
 });

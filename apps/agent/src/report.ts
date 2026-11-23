@@ -2,14 +2,21 @@
  * The market report — the first job Ikenga can really deliver.
  *
  * Who does what (the same team as the landing page):
- *   Scout      — searches the web and reads the pages (DuckDuckGo Lite +
- *                Wikipedia, free, no key). Every fact comes from a page
- *                Scout actually read, with its link shown.
- *   Researcher — turns the brief + what Scout found into a short plan.
+ *   Scout      — searches the web (DuckDuckGo Lite + Bing, free, no
+ *                key) and finds the pages worth reading. Every fact
+ *                comes from a page Reader actually read, with its
+ *                link shown.
+ *   Reader     — opens the pages Scout found and pulls out the text
+ *                that matters for the brief. A page that will not load
+ *                is skipped, not faked.
+ *   Researcher — turns the brief + what Reader pulled out into a short plan.
  *   Writer     — writes the report, in plain words, only from the sources.
  *   Analyst    — checks every number, price and date against the sources.
  *   Auditor    — reads it on a DIFFERENT model and says pass or fix. If it
  *                says fix, Writer revises once. One revision, then it ships.
+ *   Messenger  — packs the finished report and delivers it on the job
+ *                page, with its fingerprint (the same one the boss seals
+ *                on the escrow before the customer can accept).
  *
  * Money rules (the CFO's rules, not the models'):
  *   - A whole report may cost at most $0.50 of model time. A normal report
@@ -22,14 +29,15 @@
  *
  * Chunked runs (Step 3): one whole report takes ~100s, and the free
  * hosting plan cuts a request off at 60s. So the run is split into short
- * stages — Scout, then plan + write, then the numbers check, then the
- * read-through in two small parts (facts first, then a final read), and
- * a revision + second read-through if the first one asked for fixes.
+ * stages — Scout, then Reader, then plan + write, then the numbers
+ * check, then the read-through in two small parts (facts first, then a
+ * final read), and a revision + second read-through if the first one
+ * asked for fixes.
  * Each stage is one request with ONE model call, saves its work, and
  * says which stage is next. `runReportStage` runs one stage from saved
  * progress; `runMarketReport` just runs the stages one after another,
  * for the local command line. A customer's revision re-runs the write
- * and read-through stages, reusing the pages Scout already read.
+ * and read-through stages, reusing the pages Reader already read.
  *
  * Why the read-through is two stages: the Auditor used to read the
  * whole report, the numbers check and all the sources in one call on
@@ -52,28 +60,32 @@ import {
   type FortyTwoReply,
 } from "./fortytwo.js";
 import { fetchPageText, searchBing, searchWeb, searchWikipedia, type SearchResult, type SourcePage } from "./search.js";
+import { deliverWork } from "./messenger.js";
 
 export const REPORT_MODEL_BUDGET_USD = 0.5;
 export const REPORT_MAX_REVISIONS = 1;
 
 /** Stage numbers. 0 means finished — the report is delivered or refused. */
 export const REPORT_STAGE_SCOUT = 1;
-export const REPORT_STAGE_WRITE = 2;
-export const REPORT_STAGE_CHECK = 3;
+/** Reader: open the pages Scout found and pull out what matters. */
+export const REPORT_STAGE_READ = 2;
+export const REPORT_STAGE_WRITE = 3;
+export const REPORT_STAGE_CHECK = 4;
 /** Auditor, part 1: check the facts against the sources. */
-export const REPORT_STAGE_AUDIT_FACTS = 4;
+export const REPORT_STAGE_AUDIT_FACTS = 5;
 /** Auditor, part 2: final read — wording, completeness, PASS or FIX. */
-export const REPORT_STAGE_AUDIT_FINAL = 5;
+export const REPORT_STAGE_AUDIT_FINAL = 6;
 /** Writer fixes exactly what the final read flagged (one Nemotron call). */
-export const REPORT_STAGE_REVISE = 6;
+export const REPORT_STAGE_REVISE = 7;
 /** Second read-through of the revised report: facts again. */
-export const REPORT_STAGE_REAUDIT_FACTS = 7;
+export const REPORT_STAGE_REAUDIT_FACTS = 8;
 /** Second read-through of the revised report: final read again. */
-export const REPORT_STAGE_REAUDIT_FINAL = 8;
+export const REPORT_STAGE_REAUDIT_FINAL = 9;
 
 /** Plain-words labels for each stage, for the job page. */
 export const REPORT_STAGE_LABELS: Record<number, string> = {
   [REPORT_STAGE_SCOUT]: "Scout is looking the market up",
+  [REPORT_STAGE_READ]: "Reader is reading the pages Scout found",
   [REPORT_STAGE_WRITE]: "Writer is writing the report",
   [REPORT_STAGE_CHECK]: "Analyst is checking the numbers",
   [REPORT_STAGE_AUDIT_FACTS]: "A different model is checking the facts",
@@ -88,7 +100,7 @@ export function reportStageLabel(stage: number): string {
 }
 
 export interface ReportStep {
-  agent: "Scout" | "Researcher" | "Writer" | "Analyst" | "Auditor";
+  agent: "Scout" | "Reader" | "Researcher" | "Writer" | "Analyst" | "Auditor" | "Messenger";
   what: string;
   detail: string;
   model?: string;
@@ -124,6 +136,8 @@ export interface ReportProgress {
   stage: number;
   brief: string;
   revisionNote?: string;
+  /** Candidate pages Scout found, waiting for Reader to read them. */
+  candidates: SearchResult[];
   pages: SourcePage[];
   plan: string;
   report: string;
@@ -147,6 +161,7 @@ export function emptyReportProgress(brief: string, revisionNote?: string): Repor
     stage: REPORT_STAGE_SCOUT,
     brief: brief.trim(),
     revisionNote,
+    candidates: [],
     pages: [],
     plan: "",
     report: "",
@@ -163,7 +178,7 @@ export function emptyReportProgress(brief: string, revisionNote?: string): Repor
   };
 }
 
-/** A revision starts again at the writing stage, reusing Scout's pages. */
+/** A revision starts again at the writing stage, reusing the pages Reader already read. */
 export function revisionProgress(previous: ReportProgress, revisionNote: string): ReportProgress {
   return {
     ...emptyReportProgress(previous.brief, revisionNote),
@@ -204,6 +219,36 @@ export interface RunReportDeps {
 export interface RunReportInput {
   /** The customer's brief, as typed in the Hire form. */
   brief: string;
+}
+
+/**
+ * What Scout searches for, and what Reader keeps: the main topic from
+ * the brief, the named terms for Wikipedia (one name at a time), and
+ * the words a page must mention to count as a source for this report.
+ * Pure — both stages derive the same terms from the same brief.
+ */
+function reportSearchTerms(brief: string): { mainTopic: string; wikiTerms: string[]; mustMention: string[] } {
+  // A long brief returns nothing from Wikipedia and little from the web,
+  // so Scout also tries the names inside it: the part after a colon
+  // ("Paystack, Flutterwave and Moniepoint") and the capitalised words.
+  const afterColon = brief.includes(":") ? brief.split(":").slice(1).join(":").trim() : "";
+  // Capitalised words after the first word of the brief (the first word is
+  // capitalised just for starting the sentence — it is not a name).
+  const named = [...new Set(brief.split(/\s+/).slice(1).filter((w) => /^[A-Z][a-zA-Z]{2,}$/.test(w.replace(/[^a-zA-Z]/g, ""))))].join(" ");
+  const keywords = [afterColon, named].map((s) => s.replace(/[^a-zA-Z0-9 ,&]/g, "").trim()).filter(Boolean);
+  const mainTopic = keywords[0] ?? brief;
+  const wikiTerms = mainTopic
+    .split(/[,，&]| and /)
+    .map((s) => s.replace(/[^a-zA-Z0-9 ]/g, "").trim())
+    .filter((s) => s.length > 2)
+    .slice(0, 3);
+  const mustMention = [
+    ...wikiTerms,
+    ...brief.split(/\s+/).filter((w) => w.length > 4).slice(0, 6),
+  ]
+    .map((w) => w.replace(/[^a-zA-Z0-9 ]/g, "").trim())
+    .filter((w) => w.length > 2);
+  return { mainTopic, wikiTerms, mustMention };
 }
 
 function sourcesText(pages: SourcePage[]): string {
@@ -286,75 +331,78 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
   const refuse = (reason: string): ReportProgress => ({
     ...p, report: "", stage: 0, status: "refused", reason, deliveredAt: new Date().toISOString(),
   });
-  const deliver = (): ReportProgress => ({
-    ...p, stage: 0, status: "delivered", deliveredAt: new Date().toISOString(),
-  });
+  const deliver = (): ReportProgress => {
+    // Messenger packs the finished report and delivers it on the job
+    // page — its fingerprint is the same one the boss seals on the
+    // escrow before the customer can accept.
+    p.steps.push(deliverWork({ report: p.report }, "report").step);
+    return { ...p, stage: 0, status: "delivered", deliveredAt: new Date().toISOString() };
+  };
 
-  // --- Stage 1, Scout: search, then read the pages. ---
+  // --- Stage 1, Scout: search, and find the pages worth reading. ---
   if (p.stage === REPORT_STAGE_SCOUT) {
-    // A long brief returns nothing from Wikipedia and little from the web,
-    // so Scout also tries the names inside it: the part after a colon
-    // ("Paystack, Flutterwave and Moniepoint") and the capitalised words.
-    const afterColon = brief.includes(":") ? brief.split(":").slice(1).join(":").trim() : "";
-    // Capitalised words after the first word of the brief (the first word is
-    // capitalised just for starting the sentence — it is not a name).
-    const named = [...new Set(brief.split(/\s+/).slice(1).filter((w) => /^[A-Z][a-zA-Z]{2,}$/.test(w.replace(/[^a-zA-Z]/g, ""))))].join(" ");
-    const keywords = [afterColon, named].map((s) => s.replace(/[^a-zA-Z0-9 ,&]/g, "").trim()).filter(Boolean);
-    const mainTopic = keywords[0] ?? brief;
-    const pages: SourcePage[] = [...p.pages];
-    let webResults: SearchResult[] = [];
-    if (pages.length === 0) {
+    const { mainTopic } = reportSearchTerms(brief);
+    const candidates: SearchResult[] = [...p.candidates];
+    if (candidates.length === 0) {
       const queries = [...new Set([mainTopic, `${mainTopic} Nigeria`, `${mainTopic} fees`, `${mainTopic} vs`])];
       for (const q of queries) {
         // Bing first (reliable), DuckDuckGo as a backup.
         for (const fn of [searchBingFn, search]) {
           try {
             const found = await fn(q, 5);
-            for (const r of found) if (!webResults.some((x) => x.url === r.url)) webResults.push(r);
-            if (webResults.length >= 8) break;
+            for (const r of found) if (!candidates.some((x) => x.url === r.url)) candidates.push(r);
+            if (candidates.length >= 8) break;
           } catch {
             // One failed search never stops the report — Scout tries the next one.
           }
         }
-        if (webResults.length >= 8) break;
+        if (candidates.length >= 8) break;
       }
-      // Wikipedia wants one name at a time — "Paystack, Flutterwave" finds
-      // nothing, "Paystack" finds the page. Try the first three named terms.
-      const wikiTerms = mainTopic.split(/[,，&]| and /).map((s) => s.replace(/[^a-zA-Z0-9 ]/g, "").trim()).filter((s) => s.length > 2).slice(0, 3);
-      for (const term of wikiTerms.length > 0 ? wikiTerms : [brief]) {
-        const found = await wiki(term, 1).catch(() => [] as SourcePage[]);
-        for (const pp of found) if (!pages.some((x) => x.url === pp.url)) pages.push(pp);
-      }
-      // Read the web results, but only keep pages that actually mention
-      // what the customer asked about — a page that matches the word
-      // "compare" and nothing else is not a source for this report. A page
-      // passes if it mentions any named business or any content word.
-      const mustMention = [
-        ...wikiTerms,
-        ...brief.split(/\s+/).filter((w) => w.length > 4).slice(0, 6),
-      ].map((w) => w.replace(/[^a-zA-Z0-9 ]/g, "").trim()).filter((w) => w.length > 2);
-      const mentionsTopic = (text: string) => {
-        const lower = text.toLowerCase();
-        return mustMention.some((t) => lower.includes(t.toLowerCase()));
-      };
-      for (const r of webResults) {
-        if (pages.length >= 6) break;
-        const page = await fetchPage(r.url);
-        if (!page) continue;
-        if (!mentionsTopic(page.text) && !mentionsTopic(r.title)) continue;
-        if (pages.some((pp) => pp.url === page.url)) continue;
-        pages.push({ title: r.title, url: page.url, text: page.text });
-      }
+    }
+    p.candidates = candidates;
+    p.steps.push({
+      agent: "Scout",
+      what: `Looked up "${brief}" and found ${candidates.length} ${candidates.length === 1 ? "page" : "pages"} to read.`,
+      detail: candidates.length > 0 ? `Found: ${candidates.map((c) => c.title).join("; ")}` : "Nothing came back from the search — so there is nothing to read.",
+    });
+    return { ...p, stage: REPORT_STAGE_READ };
+  }
+
+  // --- Stage 2, Reader: open the pages Scout found and pull out what matters. ---
+  if (p.stage === REPORT_STAGE_READ) {
+    const { wikiTerms, mustMention } = reportSearchTerms(brief);
+    const pages: SourcePage[] = [...p.pages];
+    // Wikipedia wants one name at a time — "Paystack, Flutterwave" finds
+    // nothing, "Paystack" finds the page. Try the first three named terms.
+    for (const term of wikiTerms.length > 0 ? wikiTerms : [brief]) {
+      const found = await wiki(term, 1).catch(() => [] as SourcePage[]);
+      for (const pp of found) if (!pages.some((x) => x.url === pp.url)) pages.push(pp);
+    }
+    // Read the web results, but only keep pages that actually mention
+    // what the customer asked about — a page that matches the word
+    // "compare" and nothing else is not a source for this report. A page
+    // passes if it mentions any named business or any content word.
+    const mentionsTopic = (text: string) => {
+      const lower = text.toLowerCase();
+      return mustMention.some((t) => lower.includes(t.toLowerCase()));
+    };
+    for (const r of p.candidates) {
+      if (pages.length >= 6) break;
+      const page = await fetchPage(r.url);
+      if (!page) continue;
+      if (!mentionsTopic(page.text) && !mentionsTopic(r.title)) continue;
+      if (pages.some((pp) => pp.url === page.url)) continue;
+      pages.push({ title: r.title, url: page.url, text: page.text });
     }
     p.pages = pages;
     p.sources = pages.map((pg) => ({ title: pg.title, url: pg.url }));
     p.steps.push({
-      agent: "Scout",
-      what: `Looked up "${brief}" and read ${pages.length} ${pages.length === 1 ? "page" : "pages"}.`,
+      agent: "Reader",
+      what: `Read ${pages.length} ${pages.length === 1 ? "page" : "pages"} and pulled out what matters for your brief.`,
       detail: pages.length > 0 ? `Sources: ${p.sources.map((s) => s.title).join("; ")}` : "Nothing readable came back — so there is no report to write from.",
     });
     if (pages.length === 0) {
-      return refuse("Scout could not find anything readable about this — so there is no report to write from. Try a clearer brief, with the business or market named.");
+      return refuse("Neither Scout nor Reader could find anything readable about this — so there is no report to write from. Try a clearer brief, with the business or market named.");
     }
     return { ...p, stage: REPORT_STAGE_WRITE };
   }
@@ -363,12 +411,12 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
 
   // --- Stage 2, Researcher + Writer: a short plan, then the report. ---
   if (p.stage === REPORT_STAGE_WRITE) {
-    const planPrompt = `You are Researcher, planning a short market report for a small business owner in Nigeria.\n\nThe job: ${brief}\n\nWhat Scout found (only use facts from here):\n${sourceText}\n\nWrite a short plan: the businesses or options to compare, the prices or facts worth checking, and what the customer should take away. Keep it under 200 words. Only use facts from the sources above — do not invent any business, price or number.`;
+    const planPrompt = `You are Researcher, planning a short market report for a small business owner in Nigeria.\n\nThe job: ${brief}\n\nWhat Reader pulled out of the pages (only use facts from here):\n${sourceText}\n\nWrite a short plan: the businesses or options to compare, the prices or facts worth checking, and what the customer should take away. Keep it under 200 words. Only use facts from the sources above — do not invent any business, price or number.`;
     if (!withinBudget(FORTYTWO_MODEL_WORK, planPrompt, 600)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
     const plan = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: planPrompt }], maxTokens: 1000, reasoningEffort: "low" });
-    charge(plan, "Researcher", "Turned the brief and what Scout found into a short plan.");
+    charge(plan, "Researcher", "Turned the brief and what Reader pulled out into a short plan.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     p.plan = stripCodeFences(plan.text);
     p.steps[p.steps.length - 1].detail = p.plan.slice(0, 400);
@@ -473,15 +521,22 @@ export async function runMarketReport(input: RunReportInput, deps: RunReportDeps
   }
   let progress = emptyReportProgress(brief, deps.revisionNote);
   if (deps.existingSources && deps.existingSources.length > 0) {
-    // A revision reuses the pages Scout already read — no new search, but
-    // the Scout step still shows what was read.
+    // A revision reuses the pages Reader already read — no new search,
+    // but the Scout and Reader steps still show what was found and read.
     progress.pages = deps.existingSources;
     progress.sources = progress.pages.map((pg) => ({ title: pg.title, url: pg.url }));
-    progress.steps.push({
-      agent: "Scout",
-      what: `Looked up "${brief}" and read ${progress.pages.length} ${progress.pages.length === 1 ? "page" : "pages"}.`,
-      detail: `Sources: ${progress.sources.map((s) => s.title).join("; ")}`,
-    });
+    progress.steps.push(
+      {
+        agent: "Scout",
+        what: `Looked up "${brief}" and found ${progress.pages.length} ${progress.pages.length === 1 ? "page" : "pages"} to read.`,
+        detail: `Found: ${progress.sources.map((s) => s.title).join("; ")}`,
+      },
+      {
+        agent: "Reader",
+        what: `Read ${progress.pages.length} ${progress.pages.length === 1 ? "page" : "pages"} and pulled out what matters for your brief.`,
+        detail: `Sources: ${progress.sources.map((s) => s.title).join("; ")}`,
+      },
+    );
     progress.stage = REPORT_STAGE_WRITE;
   }
   while (progress.status === "in-progress" && progress.stage !== 0) {

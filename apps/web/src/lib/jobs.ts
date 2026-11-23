@@ -31,7 +31,7 @@ import {
   type StoredReportData,
 } from "@ikenga/ledger";
 import type { CreativeJobType, CreativeProgress, ReportProgress } from "@ikenga/agent";
-import { creativeStageLabel, reportStageLabel } from "@ikenga/agent";
+import { creativeStageLabel, investigateJobEscrow, reportStageLabel, type InvestigatorResult } from "@ikenga/agent";
 // Mainnet defaults, from the deployed contracts (contracts/deployments/celo.json).
 // The Sepolia deployment file is local-only and gitignored, so Sepolia
 // config must come from env — see getChainConfig().
@@ -40,7 +40,8 @@ import celoDeploy from "../../../../contracts/deployments/celo.json";
 /** On-chain escrow checks, from @ikenga/payments (viem lives there —
 // the web app has no viem dependency of its own). The routes import
 // them from here. */
-export { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifyTxReceipt } from "@ikenga/payments";
+import { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifyTxReceipt } from "@ikenga/payments";
+export { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifyTxReceipt };
 import { resolveAttributionTag as resolveTag, TextileClient, TEXTILE_CELO_TOKENS, cngnJobPrice } from "@ikenga/payments";
 import { IKENGA_AGENT_WALLET } from "./agentRegistration";
 export type { EscrowOnchain, TxReceiptCheck } from "@ikenga/payments";
@@ -102,6 +103,27 @@ export function isRealHire(h: {
 /** Only the real jobs — test runs stay in the log, out of the totals. */
 export function realHires(hires: HireResult[]): HireResult[] {
   return hires.filter(isRealHire);
+}
+
+/**
+ * Investigator's escrow check for a hire, wired to the real chain.
+ * The team only starts a job whose escrow checks out onchain (see
+ * investigator.ts for the checks — customer, token, vault, price,
+ * funded state, balance). The caller records each check in the log
+ * and refuses to start the job when one fails, or when the chain
+ * cannot be read at all.
+ */
+export async function investigateHireEscrow(hire: HireResult): Promise<InvestigatorResult> {
+  return investigateJobEscrow(
+    {
+      customerWallet: hire.customerWallet,
+      escrowAddress: hire.escrowAddress ?? "",
+      tokenAddress: hire.tokenAddress,
+      vaultAddress: hire.vaultAddress,
+      priceAtomic: hire.priceAtomic,
+    },
+    { readEscrow: (address) => readEscrowOnchain(address) },
+  );
 }
 
 /** Plain-words label for what the team is doing right now, for any job type. */
@@ -456,6 +478,7 @@ export function reportToProgress(report: StoredReport, brief: string): ReportPro
     stage: report.stage,
     brief,
     revisionNote: report.revisionNote,
+    candidates: report.candidates ?? [],
     pages: report.pages ?? [],
     plan: report.plan ?? "",
     report: report.report,
@@ -488,6 +511,7 @@ export function progressToReport(progress: ReportProgress): StoredReport {
     revisions: progress.revisions,
     deliveredAt: progress.deliveredAt,
     stage: progress.stage,
+    candidates: progress.candidates,
     pages: progress.pages,
     plan: progress.plan,
     checkText: progress.checkText,

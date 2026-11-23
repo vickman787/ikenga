@@ -556,6 +556,7 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
               args: [owner as Address],
             }),
           celoBalanceOf: (owner) => publicClient.getBalance({ address: owner as Address }),
+          codeAt: (address) => publicClient.getCode({ address: address as Address }),
           getAllowance: (token, owner, spender) =>
             publicClient.readContract({
               address: token as Address,

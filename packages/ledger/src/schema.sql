@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS bill_events (
   id TEXT PRIMARY KEY,
   bill_id TEXT NOT NULL REFERENCES bills(id),
   kind TEXT NOT NULL
-    CHECK (kind IN ('created', 'quote', 'refuse', 'convert', 'swap', 'payout', 'paid', 'failed', 'waiting', 'funded')),
+    CHECK (kind IN ('created', 'quote', 'refuse', 'convert', 'swap', 'payout', 'paid', 'failed', 'waiting', 'funded', 'checked')),
   reason TEXT NOT NULL,
   rate_seen DOUBLE PRECISION,
   bps_gap INT,
@@ -196,3 +196,15 @@ CREATE TABLE IF NOT EXISTS bill_events (
 );
 
 CREATE INDEX IF NOT EXISTS bill_events_bill_idx ON bill_events (bill_id, created_at);
+
+-- The 'checked' kind (Investigator's receipt, 2026-11-23) was added
+-- after the table already existed, so the old CHECK list on live
+-- databases does not include it. CREATE TABLE IF NOT EXISTS never
+-- re-runs, so these two lines widen the constraint in place. They
+-- are plain ALTERs (no DO block — the pg-mem test database does not
+-- run plpgsql) and idempotent: on a fresh database the table is
+-- created with the new list, then the constraint is dropped and
+-- re-added with the same list; on a live one the old list is swapped
+-- for the new one.
+ALTER TABLE bill_events DROP CONSTRAINT IF EXISTS bill_events_kind_check;
+ALTER TABLE bill_events ADD CONSTRAINT bill_events_kind_check CHECK (kind IN ('created', 'quote', 'refuse', 'convert', 'swap', 'payout', 'paid', 'failed', 'waiting', 'funded', 'checked'));

@@ -8,6 +8,7 @@ import {
   getHire,
   getLedger,
   getReport,
+  investigateHireEscrow,
   progressToCreative,
   progressToReport,
   reportToProgress,
@@ -26,12 +27,15 @@ import { verifySelfAgentId } from "@ikenga/payments";
  * POST /api/jobs/[id]/run — start the work, or ask for a revision.
  *
  * All four job types run here now: the market report (Scout searches
- * the web, Writer writes, Analyst checks, a different model reads it),
- * the website and the flyers (Designer reads the brief and builds the
- * page, Analyst checks every word and price against the brief, a
- * different model reads it), and the promo video (Producer puts a
- * motion slideshow together from the brief — moving slides, not a
- * video file). Every step and its AI cost go in the money log.
+ * the web, Reader reads the pages, Writer writes, Analyst checks, a
+ * different model reads it, Messenger delivers it), the website and
+ * the flyers (Designer reads the brief and builds the page, Analyst
+ * checks every word and price against the brief, a different model
+ * reads it), and the promo video (Producer puts a motion slideshow
+ * together from the brief — moving slides, not a video file). Every
+ * step and its AI cost go in the money log. Before the team starts,
+ * Investigator checks the job's escrow onchain — a failed check stops
+ * the job in plain words and nothing is spent.
  *
  * No money moves in this route itself — the $1 is already in the
  * job's escrow before this route will start anything (see the fresh-start
@@ -102,9 +106,37 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       { status: 503 },
     );
   }
+  // Investigator checks the escrow onchain before the team starts:
+  // it must be a real contract, and its customer, token, vault, price
+  // and funded state must match this job. Every check is written to
+  // the log. A failed check stops the job in plain words — the $1
+  // stays in escrow and nothing is spent. An unreadable chain waits —
+  // the job stays escrowed, so the customer can start it again.
+  const ledger = await getLedger();
+  const investigation = await investigateHireEscrow(hire);
+  for (let i = 0; i < investigation.checks.length; i++) {
+    const check = investigation.checks[i];
+    await ledger.appendDecision({
+      id: `dec_${id}_investigate_${i}_${Date.now()}`,
+      orderId: id,
+      kind: "investigate",
+      reason: `Investigator: ${check.detail}`,
+      amountMicroUsdc: 0,
+      signature: "0xikenga-step2",
+      entry: `investigate|job|${check.name}|${check.result}|${check.detail}`,
+    });
+  }
+  if (!investigation.readable) {
+    return NextResponse.json(
+      { error: "Investigator could not read the escrow onchain right now — try starting the work again in a moment." },
+      { status: 502 },
+    );
+  }
+  if (!investigation.passed) {
+    return NextResponse.json({ error: investigation.summary }, { status: 400 });
+  }
   // Record the Self check honestly — it governs payment, and the $1 is
   // held in escrow for this job.
-  const ledger = await getLedger();
   try {
     const agentAddress = (process.env.SELF_AGENT_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
     const self = await verifySelfAgentId(agentAddress, process.env.SELF_AGENT_ID);

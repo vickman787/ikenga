@@ -73,7 +73,7 @@ export interface LedgerOrder {
 export interface StoredReportData {
   report: string;
   sources: { title: string; url: string }[];
-  steps: { agent: "Scout" | "Researcher" | "Writer" | "Analyst" | "Auditor" | "Designer" | "Producer"; what: string; detail: string; model?: string; tokens?: number; costUsd?: number }[];
+  steps: { agent: "Scout" | "Reader" | "Researcher" | "Writer" | "Analyst" | "Auditor" | "Designer" | "Producer" | "Messenger"; what: string; detail: string; model?: string; tokens?: number; costUsd?: number }[];
   totalTokens: number;
   totalCostUsd: number;
   status: "delivered" | "refused" | "in-progress";
@@ -83,6 +83,9 @@ export interface StoredReportData {
   stage: number;
   /** Pages Scout read (kept so later stages — and a revision — reuse them). */
   pages?: { title: string; url: string; text: string }[];
+  /** Candidate pages Scout found, waiting for Reader to read them
+   * (kept so the chunked run survives between stages). */
+  candidates?: { title: string; url: string }[];
   plan?: string;
   checkText?: string;
   revisionNote?: string;
@@ -235,7 +238,7 @@ export interface LedgerBill {
 
 /** One receipt in a bill's hash chain — the same chaining as the CFO
  * decision log, so a bill's history can't be rewritten silently. */
-export type BillEventKind = "created" | "quote" | "refuse" | "convert" | "swap" | "payout" | "paid" | "failed" | "waiting" | "funded";
+export type BillEventKind = "created" | "quote" | "refuse" | "convert" | "swap" | "payout" | "paid" | "failed" | "waiting" | "funded" | "checked";
 
 export interface BillEvent {
   id: string;

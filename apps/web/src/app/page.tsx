@@ -15,16 +15,16 @@ import Nav from "@/components/Nav";
  */
 
 const TEAM: { name: string; role: string; line: string; buys: string; pays: string }[] = [
-  { name: "Scout", role: "Finds things", line: "Finds every business, page and source the brief asks for.", buys: "Search and maps", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Researcher", role: "Turns sentences into plans", line: "Turns your sentence into a search plan, then pulls out the facts.", buys: "AI models", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Reader", role: "Reads what matters", line: "Opens the websites and reads what matters on them.", buys: "Page reading", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Writer", role: "Writes the words", line: "Writes the posts, the ad copy, the briefs, and a personal first line for every lead.", buys: "AI models", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Designer", role: "Builds and designs", line: "Builds your website and makes the product photos and ad creatives.", buys: "AI models and images", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Producer", role: "Makes the motion", line: "Makes the motion ads, and the video in every ad launch.", buys: "Video and music", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Investigator", role: "Checks before you pay", line: "Checks every email, phone number and seller before any money moves.", buys: "Checks and screening", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Analyst", role: "Compares the numbers", line: "Compares prices, answers and signals: the numbers on every report.", buys: "AI models", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Auditor", role: "Checks the work twice", line: "Checks the work on a different AI before it is delivered.", buys: "A second model family", pays: "Pays for it itself, in USDT on Celo" },
-  { name: "Messenger", role: "Gets it to you", line: "Packs the files and gets them to you.", buys: "Delivery", pays: "The CFO covers delivery — no charge per message" },
+  { name: "Scout", role: "Finds things", line: "Searches the web for the businesses, pages and sources your brief asks for.", buys: "Search and maps", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Researcher", role: "Turns sentences into plans", line: "Turns your sentence into a short plan, then pulls the facts out of what Reader found.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Reader", role: "Reads what matters", line: "Opens the pages Scout found and pulls out the words that matter for your brief.", buys: "Page reading", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Writer", role: "Writes the words", line: "Writes your report and the words for your website, flyer and slideshow — only from the facts it was given, never invented.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Designer", role: "Builds and designs", line: "Builds your one-page website and your flyer and price list, in your colours.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Producer", role: "Makes the motion", line: "Puts your promo slideshow together — moving slides with your words, not a video file.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Investigator", role: "Checks before money moves", line: "Checks your wallet and the job's escrow on Celo before the team starts — and checks the supplier before a naira bill is paid. It only claims the checks it really runs: no sanctions or KYC check exists here.", buys: "Wallet and contract checks", pays: "Checks only read the chain — they cost nothing" },
+  { name: "Analyst", role: "Compares the numbers", line: "Compares prices, answers and signals: the numbers on every report.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Auditor", role: "Checks the work twice", line: "Checks the work on a different AI before it is delivered.", buys: "A second model family", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Messenger", role: "Gets it to you", line: "Packs the finished work, seals its fingerprint, and delivers it on your job page.", buys: "Delivery", pays: "Delivery lives on your job page — no charge" },
 ];
 
 const SERVICES: { id: "website" | "promo-video" | "flyers" | "market-report"; name: string; tagline: string; preview: "site" | "video" | "flyer" | "money" }[] = [
@@ -53,7 +53,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Who does the work?",
-    a: "A team of AI agents, one job each: one finds things, one reads, one writes, one designs, one checks. A different AI looks over the work before it reaches you, and you can follow every step on your job page. An agent only gets paid after we have checked its Self ID.",
+    a: "A team of AI agents, one job each: one finds things, one reads the pages, one writes, one designs, one checks the money before it moves, and one delivers the finished work on your job page. A different AI looks over the work before it reaches you, and you can follow every step on your job page. An agent only gets paid after we have checked its Self ID.",
   },
   {
     q: "What is Self Agent ID?",
@@ -824,9 +824,11 @@ export default function Home() {
                 Ten agents. One job each.
               </h2>
               <p style={{ marginTop: 16, fontSize: "var(--lede)", color: "var(--ink-2)", maxWidth: 640 }}>
-                Each one works like a contractor: its own wallet, a weekly
-                allowance from the CFO, and it pays for its own tools one call
-                at a time.
+                Each one does one job, and one job only. The thinking is
+                paid from our FortyTwo AI credit, and the CFO tracks what
+                each agent spends. Your $1 is separate: it waits in
+                escrow on Celo, moved through x402, until you accept
+                the work.
               </p>
             </div>
             <div className="tm-top mono">
@@ -846,16 +848,15 @@ export default function Home() {
                     <p className="buys">
                       Buys <b>{a.buys}</b> · Pays with <b>{a.pays}</b>
                     </p>
-                    <p className="mono agent-stat"><span className="dot" /> Still waiting for its first paid job</p>
                   </div>
                 </div>
               ))}
             </div>
             <p style={{ marginTop: 20, color: "var(--muted)", fontSize: 14, lineHeight: 1.6 }}>
-              About the tools the agents buy: we haven't approved any sellers
-              yet. A seller only gets paid once we've approved that tool — so
-              no agent can pay someone we haven't checked. The team is built
-              and Self ID-checked, but nobody's been paid yet.
+              About the money: the thinking is paid from our FortyTwo AI
+              credit — the CFO tracks what each agent spends, and the log
+              shows it. Your $1 is separate: it waits in escrow on Celo,
+              moved through x402, and only moves when you accept the work.
             </p>
           </div>
         </section>

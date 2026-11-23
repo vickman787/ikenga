@@ -40,6 +40,17 @@
  *      by the next run, and a failed payout leaves the bill converting,
  *      not paid.
  *
+ * Before the swap and before the payout, Investigator checks the
+ * contracts and the payout itself onchain (investigator.ts): the USDT
+ * token and the swap contract must be real contracts, the supplier
+ * must be a real address (not the zero address, not the agent wallet),
+ * and the payout must be a plain transfer of exactly the bill's
+ * amount to exactly the supplier. A failed check fails the bill and
+ * nothing moves; an unreadable chain waits for the next run. Each
+ * passed check is written down as a "checked" receipt on the bill.
+ * There is no sanctions, KYC or OFAC check — we have no such check,
+ * and nothing here claims one.
+ *
  * No step here runs on Sepolia — there is no Celo testnet corridor, so
  * the worker only processes bills on mainnet (the boss worker enforces
  * that). No live swap is possible in tests: the pipeline takes a
@@ -56,6 +67,7 @@ import {
   type TextileTx,
 } from "@ikenga/payments";
 import { decideFx } from "./fx.js";
+import { investigateBillPayout, investigateBillSwap } from "./investigator.js";
 import type { BillDecision } from "@ikenga/ledger";
 
 export const USDT_ADDRESS = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" as Address;
@@ -179,6 +191,9 @@ export interface BillRuntime {
   usdtBalanceOf(owner: string): Promise<bigint>;
   cngnBalanceOf(owner: string): Promise<bigint>;
   celoBalanceOf(owner: string): Promise<bigint>;
+  /** Contract code at an address ("" / "0x" / null when there is none) —
+   * Investigator's onchain reads, before a swap or a payout is sent. */
+  codeAt(address: string): Promise<string | null | undefined>;
   getAllowance(token: string, owner: string, spender: string): Promise<bigint>;
   waitForReceipt(hash: string): Promise<{ status: "success" | "reverted" }>;
   /** Null while the transaction is still unmined. */
@@ -444,6 +459,32 @@ async function processOneBill(
     rt.log(`bill ${bill.id}: the rate is good but the run is nearly out of actions — leaving the swap for the next run.`);
     return { actionsUsed: 0, outcome: "waiting" };
   }
+  // Investigator checks the swap contracts before the swap is sent:
+  // the USDT token and the swap contract must both be real contracts
+  // on Celo. An unreadable chain waits for the next run; a failed
+  // check fails the bill, in plain words, and nothing moves.
+  const swapCheck = await investigateBillSwap(
+    { usdtAddress: USDT_ADDRESS, reactorAddress: TEXTILE_REACTOR },
+    { codeAt: rt.codeAt },
+  );
+  if (!swapCheck.readable) {
+    rt.log(`bill ${bill.id}: could not check the swap contracts onchain — leaving it for the next run.`);
+    return { actionsUsed: 0, outcome: "waiting" };
+  }
+  if (!swapCheck.passed) {
+    await rt.updateBill(bill.id, {
+      patch: {
+        status: "failed",
+        lastCheckedAt: rt.nowIso(),
+        note: `${swapCheck.summary} Nothing moved.`,
+      },
+      event: { kind: "failed", reason: swapCheck.summary },
+    });
+    return { actionsUsed: 0, outcome: "failed" };
+  }
+  await rt.updateBill(bill.id, {
+    event: { kind: "checked", reason: swapCheck.summary },
+  });
   const sendFn = makeBillSendFn({ sendTagged: rt.sendTagged, sendRaw: rt.sendRaw, swapData: quote.transactions.swap.data });
   let executed: { txHash: string; approvalTxHashes: string[]; attributionTagged: boolean; submitted: boolean };
   try {
@@ -493,7 +534,10 @@ async function processOneBill(
 
   // 8. Pay the supplier in the same run when the cNGN is there.
   const paid = await paySupplier({ ...bill, status: "converting", swapTxHash: executed.txHash }, rt, actionsLeft - actionsUsed);
-  return { actionsUsed: actionsUsed + paid.actionsUsed, outcome: paid.outcome === "paid" ? "paid" : "converted" };
+  return {
+    actionsUsed: actionsUsed + paid.actionsUsed,
+    outcome: paid.outcome === "paid" ? "paid" : paid.outcome === "failed" ? "failed" : "converted",
+  };
 }
 
 /** A swap already sent: check it landed, then pay the supplier. */
@@ -526,7 +570,7 @@ async function paySupplier(
   bill: SiteBill,
   rt: BillRuntime,
   actionsLeft: number,
-): Promise<{ actionsUsed: number; outcome: "paid" | "waiting" }> {
+): Promise<{ actionsUsed: number; outcome: "paid" | "waiting" | "failed" }> {
   if (actionsLeft < 1) {
     rt.log(`bill ${bill.id}: the swap is done but the run is out of actions — the payout waits for the next run.`);
     return { actionsUsed: 0, outcome: "waiting" };
@@ -550,6 +594,38 @@ async function paySupplier(
     return { actionsUsed: 0, outcome: "waiting" };
   }
   const data = payoutCalldata(bill.supplierWallet, amountAtomic);
+  // Investigator checks the payout before the cNGN is sent: the
+  // supplier, the amount in the payout itself, and the cNGN token.
+  // An unreadable chain waits for the next run; a failed check fails
+  // the bill, in plain words, and nothing is paid.
+  const payoutCheck = await investigateBillPayout(
+    {
+      supplierWallet: bill.supplierWallet,
+      agentWallet: rt.takerAddress,
+      amountNgn: bill.amountNgn,
+      cngnAddress: CNGN_ADDRESS,
+      payoutData: data,
+    },
+    { codeAt: rt.codeAt },
+  );
+  if (!payoutCheck.readable) {
+    rt.log(`bill ${bill.id}: could not check the payout onchain — leaving it for the next run.`);
+    return { actionsUsed: 0, outcome: "waiting" };
+  }
+  if (!payoutCheck.passed) {
+    await rt.updateBill(bill.id, {
+      patch: {
+        status: "failed",
+        lastCheckedAt: rt.nowIso(),
+        note: `${payoutCheck.summary} Nothing was paid.`,
+      },
+      event: { kind: "failed", reason: payoutCheck.summary },
+    });
+    return { actionsUsed: 0, outcome: "failed" };
+  }
+  await rt.updateBill(bill.id, {
+    event: { kind: "checked", reason: payoutCheck.summary },
+  });
   const hash = await rt.sendTagged({ to: CNGN_ADDRESS, data, value: "0" });
   const receipt = await rt.waitForReceipt(hash);
   if (receipt.status !== "success") {

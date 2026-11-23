@@ -112,7 +112,7 @@ describe("runCreative — website (fake models)", () => {
     expect(result.html).toContain("0803 123 4567");
     expect(result.html).not.toContain("<script");
     expect(result.facts?.businessName).toBe("Ada's Kitchen");
-    expect(result.steps.map((s) => s.agent)).toEqual(["Designer", "Designer", "Analyst", "Auditor"]);
+    expect(result.steps.map((s) => s.agent)).toEqual(["Designer", "Designer", "Analyst", "Auditor", "Messenger"]);
     // Auditor runs on a different model from the Designer.
     const designerModel = calls.find((c) => c.prompt.includes("You are Designer, building"))?.model;
     const auditorModel = calls.find((c) => c.prompt.includes("You are Auditor"))?.model;
@@ -222,7 +222,7 @@ describe("runCreative — flyers (fake models)", () => {
     expect(result.html).toContain("₦2,500");
     expect(result.html).toContain("price not listed");
     expect(result.html).not.toContain("<script");
-    expect(result.steps.map((s) => s.agent)).toEqual(["Designer", "Designer", "Analyst", "Auditor"]);
+    expect(result.steps.map((s) => s.agent)).toEqual(["Designer", "Designer", "Analyst", "Auditor", "Messenger"]);
   });
 });
 
@@ -239,7 +239,7 @@ describe("runCreative — promo video (fake models)", () => {
     expect(result.slides.map((s) => s.text).join(" ")).toContain("₦2,500");
     expect(result.slides.map((s) => s.text).join(" ")).toContain("price not listed");
     expect(result.html).toBe("");
-    expect(result.steps.map((s) => s.agent)).toEqual(["Producer", "Producer", "Analyst", "Auditor"]);
+    expect(result.steps.map((s) => s.agent)).toEqual(["Producer", "Producer", "Analyst", "Auditor", "Messenger"]);
   });
 
   it("a different brief produces different slides", async () => {

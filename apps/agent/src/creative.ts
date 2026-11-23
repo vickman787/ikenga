@@ -11,6 +11,9 @@
  *   Auditor  — reads it on a DIFFERENT model and says pass or fix. If
  *              it says fix, the work is revised once. One revision,
  *              then it ships.
+ *   Messenger — packs the finished work and delivers it on the job
+ *              page, with its fingerprint (the same one the boss seals
+ *              on the escrow before the customer can accept).
  *
  * Money rules (the CFO's rules, not the models'):
  *   - A whole creative job may cost at most $0.50 of model time. A
@@ -64,6 +67,7 @@ import {
   worstCaseCostUsd,
   type FortyTwoReply,
 } from "./fortytwo.js";
+import { deliverWork } from "./messenger.js";
 
 export const CREATIVE_MODEL_BUDGET_USD = 0.5;
 export const CREATIVE_MAX_REVISIONS = 1;
@@ -113,7 +117,7 @@ export const CREATIVE_BUILDER: Record<CreativeJobType, "Designer" | "Producer"> 
   "promo-video": "Producer",
 };
 
-export const CREATIVE_JOB_NOUN: Record<CreativeJobType, string> = {
+export const CREATIVE_JOB_NOUN: Record<CreativeJobType, "website" | "flyer" | "slideshow"> = {
   website: "website",
   flyers: "flyer",
   "promo-video": "slideshow",
@@ -136,7 +140,7 @@ export interface CreativeSlide {
 }
 
 export interface CreativeStep {
-  agent: "Designer" | "Producer" | "Writer" | "Analyst" | "Auditor";
+  agent: "Designer" | "Producer" | "Writer" | "Analyst" | "Auditor" | "Messenger";
   what: string;
   detail: string;
   model?: string;
@@ -401,9 +405,14 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
   const refuse = (reason: string): CreativeProgress => ({
     ...p, html: "", slides: [], stage: 0, status: "refused", reason, deliveredAt: new Date().toISOString(),
   });
-  const deliver = (): CreativeProgress => ({
-    ...p, stage: 0, status: "delivered", deliveredAt: new Date().toISOString(),
-  });
+  const deliver = (): CreativeProgress => {
+    // Messenger packs the finished work and delivers it on the job
+    // page — its fingerprint is the same one the boss seals on the
+    // escrow before the customer can accept.
+    const content = jobType === "promo-video" ? { slides: p.slides } : { html: p.html };
+    p.steps.push(deliverWork(content, noun).step);
+    return { ...p, stage: 0, status: "delivered", deliveredAt: new Date().toISOString() };
+  };
 
   // --- Stage 1: read the brief and pull out the facts. ---
   if (p.stage === CREATIVE_STAGE_FACTS) {

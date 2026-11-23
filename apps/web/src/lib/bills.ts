@@ -82,7 +82,7 @@ export const BillWorkerUpdateSchema = z.object({
     .optional(),
   event: z
     .object({
-      kind: z.enum(["created", "quote", "refuse", "convert", "swap", "payout", "paid", "failed", "waiting"]),
+      kind: z.enum(["created", "quote", "refuse", "convert", "swap", "payout", "paid", "failed", "waiting", "checked"]),
       reason: z.string().min(1).max(500),
       rateSeen: z.number().nullable().optional(),
       bpsGap: z.number().int().nullable().optional(),

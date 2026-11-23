@@ -66,7 +66,10 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       reason: `${step.agent}: ${step.what}${step.costUsd !== undefined ? ` (about $${step.costUsd.toFixed(4)} of AI time)` : ""}`,
       amountMicroUsdc: Math.round((step.costUsd ?? 0) * 1_000_000),
       signature: "0xikenga-step2",
-      entry: `work|${step.agent}|${step.what}|${Math.round((step.costUsd ?? 0) * 1_000_000)}`,
+      // The step's detail rides in the entry too, so Messenger's
+      // delivery receipt (with the deliverable's fingerprint) is in
+      // the signed log, not only on the job page.
+      entry: `work|${step.agent}|${step.what}|${step.detail ? `${step.detail}|` : ""}${Math.round((step.costUsd ?? 0) * 1_000_000)}`,
     });
   }
   if (stored.status === "delivered") {
