@@ -162,3 +162,5 @@ export function priceJob(input: QuoteInput): Quote {
       : `Expected profit ${expectedProfit} USDC is below the floor ${CFO_MIN_EXPECTED_PROFIT_USDC} USDC; job declined.`,
   };
 }
+
+export { buildStandaloneSlideshowHtml, type SlideshowSlide } from "./slideshow.js";

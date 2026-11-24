@@ -9,6 +9,9 @@ export {
   creativeProgressToResult,
   creativeStageLabel,
   sanitizeHtml,
+  buildImagePrompt,
+  insertHeroImage,
+  HERO_IMAGE_MARKER,
   CREATIVE_MODEL_BUDGET_USD,
   CREATIVE_MAX_REVISIONS,
   CREATIVE_STAGE_FACTS,
@@ -39,6 +42,16 @@ export {
   type OpenAIReply,
   type OpenAIUsage,
 } from "./openai.js";
+export {
+  generateImageOpenAI,
+  imageCostUsd,
+  OPENAI_IMAGE_MODEL,
+  OPENAI_IMAGE_SIZE,
+  OPENAI_IMAGE_QUALITY,
+  OPENAI_IMAGE_PRICE_USD,
+  type ImageResult,
+  type GenerateImageInput,
+} from "./images.js";
 export { searchBing, searchWeb, searchWikipedia, fetchPageText, parseBingHtml, parseDuckDuckGoLite, type SearchResult, type SourcePage } from "./search.js";
 export { deliverWork, type DeliveryReceipt, type DeliveryStep } from "./messenger.js";
 export {

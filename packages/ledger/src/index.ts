@@ -97,8 +97,13 @@ export interface StoredReportData {
   deliverableKind?: "report" | "website" | "flyer" | "slideshow";
   /** The generated website / flyer page (sanitised HTML). Empty for a slideshow. */
   html?: string;
+  /** The job's one picture, as a data URI — null when the job has none.
+   * The picture is also embedded in the HTML / first slide; this field
+   * is what the chunked runner reads back so a revision reuses it
+   * instead of making a second one. */
+  image?: string | null;
   /** The promo slideshow: one card per slide. Empty for a website / flyer. */
-  slides?: { title: string; text: string }[];
+  slides?: { title: string; text: string; image?: string }[];
   /** Facts Designer / Producer read out of the brief (creative jobs). */
   facts?: {
     businessName: string;

@@ -9,3 +9,4 @@ dist/
 coverage/
 out/
 contracts/deployments/celo-sepolia.json
+docs/samples/

@@ -705,6 +705,7 @@ export function creativeToProgress(report: StoredReport, brief: string, jobType:
     facts: report.facts ?? null,
     html: report.html ?? "",
     slides: report.slides ?? [],
+    image: report.image ?? null,
     checkText: report.checkText ?? "",
     steps: (report.steps as CreativeProgress["steps"]) ?? [],
     totalTokens: report.totalTokens,
@@ -733,6 +734,7 @@ export function progressToCreative(progress: CreativeProgress): StoredReport {
     revisionNote: progress.revisionNote,
     deliverableKind: deliverableKindFor(progress.jobType),
     html: progress.html,
+    image: progress.image,
     slides: progress.slides,
     facts: progress.facts ?? undefined,
   };

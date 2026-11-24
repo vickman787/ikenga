@@ -28,23 +28,32 @@
  * What each job delivers, honestly:
  *   - Website: a real one-page website, written from the brief — the
  *     business's own words, services and contact, in the Ikenga
- *     colours. Shown on the job page in a locked-down frame, and on
- *     its own page.
+ *     colours — plus one picture of the business, made from the brief.
+ *     Shown on the job page in a locked-down frame, and on its own page.
  *   - Flyers: a real printable flyer / price list, written from the
- *     brief, with a print button. Prices come from the brief or are
- *     labelled "price not listed".
+ *     brief, with a print button — plus the same one picture. Prices
+ *     come from the brief or are labelled "price not listed".
  *   - Promo video: a motion slideshow — a sequence of slides with the
  *     business's words and colours, moving on the job page with
- *     play/pause. It is labelled a slideshow, NOT a video file:
- *     no video file is made, and none is pretended.
+ *     play/pause, the picture on the first slide. It is labelled a
+ *     slideshow, NOT a video file: no video file is made, and none is
+ *     pretended. The slideshow can be downloaded as a standalone file.
+ *
+ * The picture: one per job, made once at the design stage from the
+ * brief's facts only (see images.ts — gpt-image-1.5, about $0.019).
+ * It is stored as a data URI inside the deliverable, so the frame
+ * stays self-contained. A revision reuses it. When the picture cannot
+ * be made, the job still delivers without one and says so plainly —
+ * never fail a paid job over a picture.
  *
  * Safety: the website and flyer pages are model-written HTML. Before
- * anything is stored, sanitizeHtml() strips scripts, frames, forms,
- * pictures and anything that could run code or phone home. The job
- * page still shows the page inside a sandboxed frame with scripts
- * switched off, so even a page that slipped past the strip cannot run.
- * The slideshow never touches model HTML at all — the slides are
- * plain words, and our own page does the moving.
+ * anything is stored, sanitizeHtml() strips scripts, frames, forms
+ * and anything that could run code or phone home. A picture survives
+ * only as a data URI we made ourselves — every other <img> is cut.
+ * The job page still shows the page inside a sandboxed frame with
+ * scripts switched off, so even a page that slipped past the strip
+ * cannot run. The slideshow never touches model HTML at all — the
+ * slides are plain words, and our own page does the moving.
  *
  * Chunked runs: like the report, the work is split into short stages
  * — read the brief, build it, check it, read it through (and a second
@@ -67,6 +76,11 @@ import {
   worstCaseCostUsd,
   type OpenAIReply,
 } from "./openai.js";
+import {
+  OPENAI_IMAGE_PRICE_USD,
+  generateImageOpenAI,
+  type ImageResult,
+} from "./images.js";
 import { deliverWork } from "./messenger.js";
 
 export const CREATIVE_MODEL_BUDGET_USD = 0.5;
@@ -137,6 +151,8 @@ export interface CreativeFacts {
 export interface CreativeSlide {
   title: string;
   text: string;
+  /** The job's one picture, as a data URI — only ever on the first slide. */
+  image?: string;
 }
 
 export interface CreativeStep {
@@ -153,6 +169,8 @@ export interface CreativeResult {
   html: string;
   /** The promo slideshow. Empty for a website / flyer. */
   slides: CreativeSlide[];
+  /** The job's one picture, as a data URI — null when the job has none. */
+  image: string | null;
   facts: CreativeFacts | null;
   steps: CreativeStep[];
   totalTokens: number;
@@ -177,6 +195,8 @@ export interface CreativeProgress {
   facts: CreativeFacts | null;
   html: string;
   slides: CreativeSlide[];
+  /** The job's one picture, as a data URI — null until it is made. */
+  image: string | null;
   checkText: string;
   steps: CreativeStep[];
   totalTokens: number;
@@ -196,6 +216,7 @@ export function emptyCreativeProgress(brief: string, jobType: CreativeJobType, r
     facts: null,
     html: "",
     slides: [],
+    image: null,
     checkText: "",
     steps: [],
     totalTokens: 0,
@@ -215,6 +236,8 @@ export function creativeRevisionProgress(previous: CreativeProgress, revisionNot
     // The old work stays on the page until the new one is built.
     html: previous.html,
     slides: previous.slides,
+    // The picture is made once — a revision reuses it, never re-makes it.
+    image: previous.image,
   };
 }
 
@@ -222,6 +245,7 @@ export function creativeProgressToResult(p: CreativeProgress): CreativeResult {
   return {
     html: p.status === "delivered" ? p.html : "",
     slides: p.status === "delivered" ? p.slides : [],
+    image: p.status === "delivered" ? p.image : null,
     facts: p.facts,
     steps: p.steps,
     totalTokens: p.totalTokens,
@@ -234,6 +258,11 @@ export function creativeProgressToResult(p: CreativeProgress): CreativeResult {
 
 export interface RunCreativeDeps {
   chat?: (input: { model: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; maxTokens?: number; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }) => Promise<OpenAIReply>;
+  /** One picture for the job (see images.ts). When absent, the live
+   * OpenAI Images API is used — but only when OPENAI_API_KEY is set.
+   * When it returns null or throws, the job still delivers without a
+   * picture and says so plainly — never fail a paid job over a picture. */
+  image?: (input: { prompt: string }) => Promise<ImageResult | null>;
   /** Extra instructions from the customer ("ask for one free revision"). */
   revisionNote?: string;
   /** Facts already read (a revision reuses them — no new read). */
@@ -248,6 +277,23 @@ export interface RunCreativeInput {
 
 function stripCodeFences(text: string): string {
   return text.replace(/^```[a-z]*\n?/gim, "").replace(/```$/gm, "").trim();
+}
+
+/**
+ * Keep only the HTML document in a model reply. A model can add
+ * words before the page ("Here is your website:") or commentary
+ * after it ("In this corrected version: ...") — text after </html>
+ * would show up at the bottom of the delivered page, so it goes.
+ * When there is no complete document, the text is returned as-is
+ * and the caller's length/heading check refuses it as before.
+ */
+export function extractHtmlDocument(text: string): string {
+  const clean = stripCodeFences(text);
+  const start = clean.search(/<!doctype html[^>]*>|<html[\s>]/i);
+  if (start === -1) return clean;
+  const end = clean.toLowerCase().lastIndexOf("</html>");
+  if (end === -1) return clean;
+  return clean.slice(start, end + "</html>".length);
 }
 
 /** Pull the first JSON object out of a model reply (fences or no fences). */
@@ -305,6 +351,95 @@ function parseFacts(text: string): CreativeFacts | null {
   }
 }
 
+/**
+ * The picture prompt — built from the brief's facts only, never
+ * invented. One line, so it can travel as a single command argument.
+ * It says "no text" because image models render garbled words, and a
+ * picture with a wrong price or a made-up sign would be a lie the
+ * customer paid for.
+ */
+export function buildImagePrompt(facts: CreativeFacts, jobType: CreativeJobType): string {
+  const subject = [
+    facts.businessName,
+    facts.whatItDoes,
+    facts.services.slice(0, 3).join(", "),
+  ]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(" — ");
+  const kind = jobType === "promo-video" ? "a short promo" : jobType === "flyers" ? "a flyer" : "a website";
+  return `A bright, realistic photograph for ${subject || "a small business in Nigeria"}, for ${kind}. Show the food or the work itself, warm daylight, a clean simple scene. No text, no words, no letters, no numbers, no signs, no logos, no prices in the picture — the picture must carry no writing at all. Only what the brief describes — do not add any product, dish or object the brief does not mention.`;
+}
+
+/** Where the picture goes in a website / flyer page: a marker the model puts after the headline. */
+export const HERO_IMAGE_MARKER = "<!-- HERO_IMAGE -->";
+
+function escapeAttr(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * Put the job's picture into a built page: at the marker when the
+ * model left one, otherwise right after the main headline. When
+ * there is no headline to hang it on, the picture stays out — a
+ * picture floating above nothing would look worse than none.
+ */
+export function insertHeroImage(html: string, dataUri: string, alt: string): string {
+  const img = `<img src="${dataUri}" alt="${escapeAttr(alt)}">`;
+  if (html.includes(HERO_IMAGE_MARKER)) return html.replace(HERO_IMAGE_MARKER, img);
+  const h1 = html.match(/<\/h1\s*>/i);
+  if (h1 && h1.index !== undefined) {
+    const at = h1.index + h1[0].length;
+    return `${html.slice(0, at)}${img}${html.slice(at)}`;
+  }
+  return html;
+}
+
+/**
+ * Drop price-table rows whose item is not in the brief's facts.
+ *
+ * A model can slip an extra row into a flyer's price list — "Special
+ * Offers", "Combo deal" — even when the prompt says not to. This is
+ * the deterministic backstop: a row stays only when its first cell
+ * names an item from the facts (case-insensitive, trimmed; a
+ * parenthetical qualifier after the name, like "Jollof rice (spicy)",
+ * still counts as the same item). Header rows and single-cell note
+ * rows name no item, so they stay. A row for a facts item with no
+ * price stays too — it still says "price not listed".
+ *
+ * When the brief lists no prices at all there is nothing to match
+ * against, so the page is returned untouched — dropping every row
+ * would be worse than the slip it guards against.
+ */
+export function pruneUnknownPriceRows(html: string, facts: CreativeFacts): string {
+  const known = facts.prices.map((p) => normalizeItemName(p.item)).filter(Boolean);
+  if (known.length === 0) return html;
+  return html.replace(/<table[\s\S]*?<\/table\s*>/gi, (table) =>
+    table.replace(/<tr\b[^>]*>[\s\S]*?<\/tr\s*>/gi, (row) => {
+      if (/<th\b/i.test(row)) return row;
+      const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td\s*>/gi)];
+      if (cells.length < 2) return row;
+      const item = normalizeItemName(cells[0][1]);
+      const isKnown = known.some((k) => item === k || item.startsWith(`${k} (`));
+      return isKnown ? row : "";
+    }),
+  );
+}
+
+function normalizeItemName(text: string): string {
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/[:.\-–—]+$/, "")
+    .trim();
+}
+
 function parseSlides(text: string): CreativeSlide[] | null {
   const json = extractJsonObject(text);
   if (!json) return null;
@@ -323,41 +458,59 @@ function parseSlides(text: string): CreativeSlide[] | null {
 
 /**
  * Strip anything that could run code or reach out from model-written
- * HTML, before it is stored or shown. Scripts, frames, forms, pictures
- * and plug-ins go entirely; event-handler attributes and javascript:
- * links are cut. Inline <style> stays — it is what makes the page
- * look finished — but it cannot run code. The page is still shown in
- * a sandboxed frame with scripts switched off.
+ * HTML, before it is stored or shown. Scripts, frames, forms and
+ * plug-ins go entirely; event-handler attributes and javascript:
+ * links are cut. Pictures are the one exception: an <img> survives
+ * only when its source is a data URI we made ourselves (the job's
+ * own picture, embedded as base64) — every other picture, external
+ * or javascript:, is stripped. Inline <style> stays — it is what
+ * makes the page look finished — but it cannot run code. The page is
+ * still shown in a sandboxed frame with scripts switched off.
  */
 export function sanitizeHtml(html: string): string {
   let out = html;
   out = out.replace(/<script[\s\S]*?<\/script\s*>/gi, "");
+  // A <title> is stripped with its text: leaving the text behind
+  // would print the name twice — once small at the top of the page
+  // (stray text in <head> is rendered by the browser) and once as
+  // the headline.
+  out = out.replace(/<title[\s\S]*?<\/title\s*>/gi, "");
   out = out.replace(/<style[\s\S]*?url\(\s*javascript:[^)]*\)[\s\S]*?<\/style\s*>/gi, "");
   out = out.replace(/<\/?(iframe|object|embed|form|link|meta|base|title|noscript|template|slot|audio|video|input|button|select|textarea)\b[^>]*>/gi, "");
-  out = out.replace(/<img\b[^>]*>/gi, "");
   out = out.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
   out = out.replace(/(href|src|action)\s*=\s*("javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi, '$1="#"');
   out = out.replace(/url\(\s*javascript:[^)]*\)/gi, "url(#)");
+  // Pictures: keep only our own embedded ones. Anything else — an
+  // external URL, a javascript: source, a source with no value — goes.
+  out = out.replace(/<img\b[^>]*>/gi, (tag) => {
+    const srcMatch = tag.match(/\ssrc\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i);
+    if (!srcMatch) return "";
+    const src = srcMatch[1].replace(/^["']|["']$/g, "");
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(src)) return "";
+    const altMatch = tag.match(/\salt\s*=\s*("[^"]*"|'[^']*')/i);
+    const alt = altMatch ? ` alt=${altMatch[1].replace(/"/g, "&quot;")}` : ` alt=""`;
+    return `<img src="${src}"${alt}>`;
+  });
   return out.trim();
 }
 
 function buildPrompt(jobType: CreativeJobType, facts: CreativeFacts, revisionNote?: string): string {
   const palette =
     "Use the Ikenga colours unless the brief asked for others: cream #FBF9F4 background, deep green #13271C for headings, leaf green #A3E36A for buttons and highlights, brass #C8902F for small accents.";
-  const rules = `Rules: every word on the page must come from the facts below or the brief — do not invent a service, a price, a phone number, an address or a claim. If a price was not in the brief, write "price not listed" — never guess a price. Write in plain, warm, human words — no jargon. No JavaScript, no external pictures, no forms — links only (phone, WhatsApp, maps). Style it fully with inline <style> so it looks finished on its own.`;
+  const rules = `Rules: every word on the page must come from the facts below or the brief — do not invent a service, a price, a phone number, an address or a claim. List only what is in the facts — never add an extra row, offer, section, slide or item that is not in the facts (no "Special Offers", no "Combo deal", no extras of any kind). If a price was not in the brief, write "price not listed" — never guess a price. Write in plain, warm, human words — no jargon. No JavaScript, no forms. Pictures are made for you and put in the page — never link a picture from anywhere else, and never write an <img> tag yourself. Style it fully with inline <style> so it looks finished on its own.`;
   const briefFacts = factsText(facts);
   if (jobType === "website") {
-    return `You are Designer, building a one-page website for a small business in Nigeria.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nBuild the whole website and return ONLY the HTML for one complete page (<!DOCTYPE html> to </html>). It must have: the business name big at the top, what it does in one or two plain sentences, its services, how to reach it (WhatsApp / phone / address as given), and its hours or location if given. ${palette}\n\n${rules}`;
+    return `You are Designer, building a one-page website for a small business in Nigeria.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nBuild the whole website and return ONLY the HTML for one complete page (<!DOCTYPE html> to </html>). Lay it out like a real small-business website, in this order:\n\n1. A hero at the top: <header class="hero"> — the business name big first, then put ${HERO_IMAGE_MARKER} on its own line (the picture goes there), then one plain line about what it does, and a big call/order button (a link to the phone or WhatsApp from the facts).\n2. What they serve: one card per service from the facts — each card shows the service name and its price (write "price not listed" where the brief gave no price). Only the services in the facts — no extras, no invented sections.\n3. Hours and place: opening hours and location in their own section, only if the facts give them.\n4. Call and order: the contact big, with the same big call/order button.\n\n${palette} The hero picture must look right when it lands: write CSS for .hero img (full width, rounded corners). One column, max-width about 720px, readable on a phone, and it must print cleanly on plain white paper (light background, dark text).\n\n${rules}`;
   }
   if (jobType === "flyers") {
-    return `You are Designer, making a printable flyer and price list for a small business in Nigeria.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nBuild the flyer and return ONLY the HTML for one complete page (<!DOCTYPE html> to </html>). It must have: a big headline with the business name, what it does in one plain line, a price list (a table: item, price — write "price not listed" where the brief gave no price), and the contact big at the bottom so a customer can order from it. Make it fit on one printed A4 page (about 794px wide). ${palette}\n\n${rules}`;
+    return `You are Designer, making a printable flyer and price list for a small business in Nigeria.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nBuild the flyer and return ONLY the HTML for one complete page (<!DOCTYPE html> to </html>). It must have: a big headline with the business name, what it does in one plain line, a price list (a table: item, price — list exactly the items in the facts, in the same order, and nothing else, and write "price not listed" where the brief gave no price), and the contact big at the bottom so a customer can order from it. Put ${HERO_IMAGE_MARKER} on its own line right after the headline — the picture goes there. Make it fit on one printed A4 page (about 794px wide). ${palette}\n\n${rules}`;
   }
-  return `You are Producer, putting together a motion slideshow for a small business in Nigeria — the words and pictures of a short promo, as moving slides.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nReturn JSON ONLY, in this shape: {"slides": [{"title": "...", "text": "..."}]}. Five slides: 1) the hook — the one line that makes someone stop; 2) what the business does; 3) the offer or services; 4) the prices (write "price not listed" where the brief gave no price); 5) how to order — the contact from the facts. Each slide: a title under 8 words, text under 25 words. Every word must come from the facts or the brief — do not invent a service, a price, a phone number or a claim. Write in plain, warm, human words.`;
+  return `You are Producer, putting together a motion slideshow for a small business in Nigeria — the words and pictures of a short promo, as moving slides.\n\nThe facts (only use these — do not invent anything):\n${briefFacts}\n${revisionNote ? `\nThe customer asked for a change: ${revisionNote}\n` : ""}\nReturn JSON ONLY, in this shape: {"slides": [{"title": "...", "text": "..."}]}. Five slides: 1) the hook — the one line that makes someone stop; 2) what the business does; 3) the offer or services; 4) the prices (write "price not listed" where the brief gave no price); 5) how to order — the contact from the facts. Each slide: a title under 8 words, text under 25 words. Every word must come from the facts or the brief — do not invent a service, a price, a phone number or a claim. List only what is in the facts — never add an extra row, offer, section, slide or item that is not in the facts. Write in plain, warm, human words.`;
 }
 
 function auditPrompt(jobType: CreativeJobType, facts: CreativeFacts, deliverable: string, checkText: string): string {
   const noun = CREATIVE_JOB_NOUN[jobType];
-  return `You are Auditor, reading a ${noun} before it reaches the customer. You are a different model from the one that built it.\n\nThe ${noun}:\n${deliverable}\n\nThe numbers check:\n${checkText}\n\nThe facts from the brief (the only facts allowed):\n${factsText(facts)}\n\nAnswer with exactly one line first: PASS or FIX. Then, if FIX, say in plain words what is wrong and what must change. Only judge it against the facts — a word that is in the facts is fine, a word that is not is a problem. A price shown as "price not listed" is fine; a price that is not in the facts is a problem.`;
+  return `You are Auditor, reading a ${noun} before it reaches the customer. You are a different model from the one that built it.\n\nThe ${noun}:\n${deliverable}\n\nA "[picture]" marker in the work means the job's own picture is embedded there — it is not a missing image, so never flag it as one.\n\nThe numbers check:\n${checkText}\n\nThe facts from the brief (the only facts allowed):\n${factsText(facts)}\n\nAnswer with exactly one line first: PASS or FIX. Then, if FIX, say in plain words what is wrong and what must change. Only judge it against the facts — a word that is in the facts is fine, a word that is not is a problem. A price shown as "price not listed" is fine; a price that is not in the facts is a problem.`;
 }
 
 /**
@@ -462,13 +615,68 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     return refuse("The brief was not read yet — start the job again.");
   }
   const facts = p.facts;
-  const deliverableText = (): string =>
-    jobType === "promo-video" ? JSON.stringify({ slides: p.slides }, null, 2) : p.html;
+  /**
+   * The work as the Analyst and Auditor see it. The picture is a
+   * long base64 string — they only need to know a picture is there,
+   * not its bytes, so it is replaced with a placeholder. Sending the
+   * bytes would burn the budget on tokens and tell them nothing.
+   */
+  const deliverableText = (): string => {
+    if (jobType === "promo-video") {
+      const slides = p.slides.map((s) => ({ title: s.title, text: s.text, ...(s.image ? { image: "[picture]" } : {}) }));
+      return JSON.stringify({ slides }, null, 2);
+    }
+    return p.html.replace(/<img\b[^>]*>/gi, "<img [picture]>");
+  };
+  /** The picture, once made, belongs in the finished work — on the
+   * first slide for a slideshow, after the headline for a page. */
+  const attachImage = (): void => {
+    if (!p.image) return;
+    if (jobType === "promo-video") {
+      if (p.slides.length > 0) {
+        p.slides = [{ ...p.slides[0], image: p.image }, ...p.slides.slice(1)];
+      }
+      return;
+    }
+    const alt = [facts.businessName, facts.whatItDoes].map((s) => s.trim()).filter(Boolean).join(" — ") || "The business";
+    p.html = insertHeroImage(p.html, p.image, alt);
+  };
 
   // --- Stage 2: build the work from the facts. ---
   if (p.stage === CREATIVE_STAGE_BUILD) {
     const prompt = buildPrompt(jobType, facts, p.revisionNote);
     const maxTokens = jobType === "promo-video" ? 1200 : 4000;
+    // --- The picture: one per job, made once at the design stage.
+    // A revision reuses the picture already made (p.image is set).
+    // When the picture cannot be made — the service did not answer,
+    // or it would not fit in the $0.50 — the job still delivers
+    // without one and says so plainly. When there is no way to call
+    // the service at all (no key, no injected stand-in), it is
+    // skipped quietly: the live run gate already stops a job without
+    // a key, so this only happens in tests and local runs.
+    if (!p.image) {
+      const imageFn =
+        deps.image ??
+        (process.env.OPENAI_API_KEY ? async (input: { prompt: string }) => generateImageOpenAI(input) : undefined);
+      if (imageFn) {
+        if (p.totalCostUsd + OPENAI_IMAGE_PRICE_USD + worstCaseCostUsd(OPENAI_MODEL_WORK, approxTokens(prompt), maxTokens) > CREATIVE_MODEL_BUDGET_USD) {
+          p.steps.push({ agent: builder, what: "No picture this time — it would not fit in the $0.50 set aside for this job.", detail: "The work is delivered without a picture; nothing else changed." });
+        } else {
+          try {
+            const made = await imageFn({ prompt: buildImagePrompt(facts, jobType) });
+            if (made && made.dataUri) {
+              p.image = made.dataUri;
+              p.totalCostUsd = Math.round((p.totalCostUsd + made.costUsd) * 1_000_000) / 1_000_000;
+              p.steps.push({ agent: builder, what: "Made one picture for the work.", detail: `A picture of ${facts.businessName || "the business"} — ${made.model}, about $${made.costUsd.toFixed(3)}.`, model: made.model, costUsd: made.costUsd });
+            } else {
+              p.steps.push({ agent: builder, what: "No picture this time — the picture did not come back.", detail: "The work is delivered without a picture; nothing else changed." });
+            }
+          } catch {
+            p.steps.push({ agent: builder, what: "No picture this time — the picture service did not answer.", detail: "The work is delivered without a picture; nothing else changed." });
+          }
+        }
+      }
+    }
     if (!withinBudget(OPENAI_MODEL_WORK, prompt, maxTokens)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
@@ -484,7 +692,11 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
       p.html = "";
       p.steps[p.steps.length - 1].detail = `${slides.length} slides: ${slides.map((s) => s.title).join(" · ")}`.slice(0, 400);
     } else {
-      const html = sanitizeHtml(stripCodeFences(built.text));
+      // The flyer's price list is pruned to the brief's items: a model
+      // slip that adds an extra row ("Special Offers") is caught here,
+      // deterministically, even if the prompt and the Auditor miss it.
+      const rawHtml = sanitizeHtml(extractHtmlDocument(built.text));
+      const html = jobType === "flyers" ? pruneUnknownPriceRows(rawHtml, facts) : rawHtml;
       if (html.length < 120 || !/<(h1|h2)[\s>]/.test(html)) {
         return refuse(`The ${noun} did not come back as a finished page — try the job again.`);
       }
@@ -492,6 +704,7 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
       p.slides = [];
       p.steps[p.steps.length - 1].detail = `About ${html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length} words, built from your brief.`;
     }
+    attachImage();
     return { ...p, stage: CREATIVE_STAGE_CHECK };
   }
 
@@ -548,11 +761,14 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
       p.slides = slides;
       p.steps[p.steps.length - 1].detail = `${slides.length} slides, revised.`;
     } else {
-      const html = sanitizeHtml(stripCodeFences(fixed.text));
+      const rawHtml = sanitizeHtml(extractHtmlDocument(fixed.text));
+      const html = jobType === "flyers" ? pruneUnknownPriceRows(rawHtml, facts) : rawHtml;
       if (html.length < 120 || !/<(h1|h2)[\s>]/.test(html)) return refuse(`The revised ${noun} did not come back as a finished page — try the job again.`);
       p.html = html;
       p.steps[p.steps.length - 1].detail = "Revised once.";
     }
+    // The revised work gets the same picture back — it was made once.
+    attachImage();
     p.revisions += 1;
     return { ...p, stage: CREATIVE_STAGE_REAUDIT };
   }
@@ -564,7 +780,7 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
 export async function runCreative(input: RunCreativeInput, deps: RunCreativeDeps = {}): Promise<CreativeResult> {
   const brief = input.brief.trim();
   if (!brief) {
-    return { html: "", slides: [], facts: null, steps: [], totalTokens: 0, totalCostUsd: 0, status: "refused", reason: "There was no brief to work from.", revisions: 0 };
+    return { html: "", slides: [], image: null, facts: null, steps: [], totalTokens: 0, totalCostUsd: 0, status: "refused", reason: "There was no brief to work from.", revisions: 0 };
   }
   let progress = emptyCreativeProgress(brief, input.jobType, deps.revisionNote);
   if (deps.existingFacts) {

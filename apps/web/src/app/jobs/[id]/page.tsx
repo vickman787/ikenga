@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { JOB_LABELS, type JobType } from "@ikenga/shared";
+import { JOB_LABELS, buildStandaloneSlideshowHtml, type JobType } from "@ikenga/shared";
 import Slideshow from "@/components/Slideshow";
 import { PayPanel } from "@/components/HireForm";
 import StepCard from "./StepCard";
@@ -78,7 +78,7 @@ interface JobDetail {
     stage: number;
     deliverableKind?: "report" | "website" | "flyer" | "slideshow";
     html?: string;
-    slides?: { title: string; text: string }[];
+    slides?: { title: string; text: string; image?: string }[];
   } | null;
   nextStep: string | null;
   backend: string;
@@ -589,6 +589,28 @@ export default function JobPage() {
                       <div style={{ marginTop: 14 }}>
                         <Slideshow slides={data.report.slides} />
                       </div>
+                      <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => {
+                            const html = buildStandaloneSlideshowHtml(data.report?.slides ?? []);
+                            const blob = new Blob([html], { type: "text/html" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = "slideshow.html";
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="btn"
+                          type="button"
+                        >
+                          Download the slideshow
+                        </button>
+                      </div>
+                      <p style={{ marginTop: 12, fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
+                        A standalone file — it plays the same slides with the
+                        picture, and needs nothing else to open.
+                      </p>
                     </>
                   )}
                   <p style={{ marginTop: 16, fontSize: 13, color: "var(--muted)" }}>

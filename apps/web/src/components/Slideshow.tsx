@@ -7,9 +7,11 @@ import { useEffect, useState } from "react";
  * The slides are the business's own words from its brief; this
  * component only moves between them. Play/pause, step forward and
  * back, and dots to jump to a slide. No video file is made here, and
- * the page says so in plain words next to the player.
+ * the page says so in plain words next to the player. The first slide
+ * carries the job's one picture, when the job has one — embedded in
+ * the slide itself, never linked from anywhere else.
  */
-export default function Slideshow({ slides }: { slides: { title: string; text: string }[] }) {
+export default function Slideshow({ slides }: { slides: { title: string; text: string; image?: string }[] }) {
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   const total = slides.length;
@@ -44,6 +46,13 @@ export default function Slideshow({ slides }: { slides: { title: string; text: s
         <p style={{ fontSize: 13, letterSpacing: 2, textTransform: "uppercase", color: "#A3E36A" }}>
           Slide {index + 1} of {total}
         </p>
+        {slide.image && (
+          <img
+            src={slide.image}
+            alt=""
+            style={{ width: "100%", maxHeight: 320, objectFit: "cover", borderRadius: 12, display: "block" }}
+          />
+        )}
         <h3 style={{ fontSize: 32, lineHeight: 1.15, margin: 0 }}>{slide.title}</h3>
         <p style={{ fontSize: 18, lineHeight: 1.6, color: "#FBF9F4", opacity: 0.92, margin: 0 }}>{slide.text}</p>
       </div>

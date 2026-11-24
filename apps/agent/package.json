@@ -1,38 +1,41 @@
 {
-  "name": "@ikenga/agent",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/cli.js",
-    "boss": "tsc -p tsconfig.build.json && node dist/boss-worker.js",
-    "exec:sepolia": "tsc -p tsconfig.build.json && node dist/e2e-sepolia.js",
-    "run:report": "tsc -p tsconfig.build.json && node dist/run-report.js",
-    "test": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "exec:per-job-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-per-job-sepolia.js",
-    "exec:tagged-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-tagged-customer-sepolia.js",
-    "exec:multitoken-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-multitoken-sepolia.js"
-  },
-  "dependencies": {
-    "@ikenga/ledger": "workspace:*",
-    "@ikenga/payments": "workspace:*",
-    "@ikenga/shared": "workspace:*",
-    "viem": "^2.58.4"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.2",
-    "vitest": "^2.1.0",
-    "@types/node": "^22.0.0"
+ "name": "@ikenga/agent",
+ "version": "0.1.0",
+ "private": true,
+ "type": "module",
+ "main": "./dist/index.js",
+ "types": "./dist/index.d.ts",
+ "exports": {
+  ".": {
+   "types": "./dist/index.d.ts",
+   "import": "./dist/index.js",
+   "default": "./dist/index.js"
   }
+ },
+ "scripts": {
+  "build": "tsc -p tsconfig.build.json",
+  "start": "node dist/cli.js",
+  "boss": "tsc -p tsconfig.build.json && node dist/boss-worker.js",
+  "exec:sepolia": "tsc -p tsconfig.build.json && node dist/e2e-sepolia.js",
+  "run:report": "tsc -p tsconfig.build.json && node dist/run-report.js",
+  "test": "pnpm --filter @ikenga/shared build && pnpm --filter @ikenga/ledger build && pnpm --filter @ikenga/payments build && vitest run",
+  "typecheck": "tsc --noEmit -p tsconfig.json",
+  "exec:per-job-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-per-job-sepolia.js",
+  "exec:tagged-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-tagged-customer-sepolia.js",
+  "exec:multitoken-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-multitoken-sepolia.js",
+  "exec:image-sepolia": "tsc -p tsconfig.build.json && node dist/e2e-image-sepolia.js",
+  "regen:flyer-sample": "tsc -p tsconfig.build.json && node dist/regen-flyer-sample.js",
+  "regen:website-sample": "tsc -p tsconfig.build.json && node dist/regen-website-sample.js"
+ },
+ "dependencies": {
+  "@ikenga/ledger": "workspace:*",
+  "@ikenga/payments": "workspace:*",
+  "@ikenga/shared": "workspace:*",
+  "viem": "^2.58.4"
+ },
+ "devDependencies": {
+  "typescript": "^5.9.2",
+  "vitest": "^2.1.0",
+  "@types/node": "^22.0.0"
+ }
 }
