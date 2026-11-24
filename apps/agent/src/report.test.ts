@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { runMarketReport, REPORT_MODEL_BUDGET_USD } from "./report.js";
-import type { FortyTwoReply } from "./fortytwo.js";
+import type { OpenAIReply } from "./openai.js";
 
 function fakeChat(script: Record<string, string>) {
   const calls: { model: string; prompt: string }[] = [];
-  const chat = async (input: { model: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<FortyTwoReply> => {
+  const chat = async (input: { model: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<OpenAIReply> => {
     const prompt = input.messages.map((m) => m.content).join("\n");
     calls.push({ model: input.model, prompt });
     const key = Object.keys(script).find((k) => prompt.includes(k)) ?? "default";
@@ -209,7 +209,7 @@ describe("runReportStage (chunked, one stage per call)", () => {
 });
 
   it("never spends past the $0.50 budget", async () => {
-    const expensiveChat = async (input: { model: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<FortyTwoReply> => ({
+    const expensiveChat = async (input: { model: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<OpenAIReply> => ({
       model: input.model,
       text: "x".repeat(100),
       usage: { promptTokens: 900_000, completionTokens: 900_000, totalTokens: 1_800_000 },

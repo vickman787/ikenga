@@ -31,7 +31,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   const { id } = await ctx.params;
   const hire = await getHire(id);
   if (!hire) return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  if (!process.env.FORTYTWO_API_KEY) {
+  if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
       { error: "The AI is not connected yet — the team cannot start the work until its key is set on the server." },
       { status: 503 },

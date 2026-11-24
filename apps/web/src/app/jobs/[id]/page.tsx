@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { JOB_LABELS, type JobType } from "@ikenga/shared";
 import Slideshow from "@/components/Slideshow";
 import { PayPanel } from "@/components/HireForm";
+import StepCard from "./StepCard";
 import {
   acceptJob,
   connectInjected,
@@ -530,15 +531,7 @@ export default function JobPage() {
               </div>
             )}
             {data.report && data.report.steps.map((s, i) => (
-              <div key={`${s.agent}-${i}`} className="card pad" style={{ marginTop: 12 }}>
-                <p><b>{s.agent}</b> — {s.what}</p>
-                {s.detail && <p style={{ marginTop: 4, color: "var(--ink-2)", fontSize: 14, lineHeight: 1.6 }}>{s.detail}</p>}
-                {s.model && (
-                  <p className="mono" style={{ marginTop: 6, fontSize: 12, color: "var(--muted)" }}>
-                    {s.model}{s.tokens ? ` · ${s.tokens.toLocaleString()} tokens` : ""}{s.costUsd !== undefined ? ` · about $${s.costUsd.toFixed(4)}` : ""}
-                  </p>
-                )}
-              </div>
+              <StepCard key={`${s.agent}-${i}`} step={s} />
             ))}
             {data.report && data.report.status === "delivered" && (
               <>

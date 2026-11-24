@@ -29,16 +29,16 @@ export {
   type RunCreativeDeps,
 } from "./creative.js";
 export {
-  chatFortyTwo,
-  resolveFortyTwoKey,
+  chatOpenAI,
+  resolveOpenAIKey,
   estimateCostUsd,
   worstCaseCostUsd,
-  FORTYTWO_BASE_URL,
-  FORTYTWO_MODEL_WORK,
-  FORTYTWO_MODEL_AUDIT,
-  type FortyTwoReply,
-  type FortyTwoUsage,
-} from "./fortytwo.js";
+  OPENAI_BASE_URL,
+  OPENAI_MODEL_WORK,
+  OPENAI_MODEL_AUDIT,
+  type OpenAIReply,
+  type OpenAIUsage,
+} from "./openai.js";
 export { searchBing, searchWeb, searchWikipedia, fetchPageText, parseBingHtml, parseDuckDuckGoLite, type SearchResult, type SourcePage } from "./search.js";
 export { deliverWork, type DeliveryReceipt, type DeliveryStep } from "./messenger.js";
 export {

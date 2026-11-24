@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryLedger } from "@ikenga/ledger";
-import { createHire, getHire, getLedger, setLedgerForTests } from "@/lib/jobs";
+import { createHire, getHire, getLedger, getReport, setLedgerForTests } from "@/lib/jobs";
 import { POST as postEscrow } from "./escrow/route.js";
 import { POST as postFund } from "./fund/route.js";
 import { POST as postDecision } from "./decision/route.js";
@@ -59,7 +59,7 @@ describe("escrow → fund → run flow", () => {
   beforeEach(() => {
     setLedgerForTests(new MemoryLedger());
     vi.clearAllMocks();
-    process.env.FORTYTWO_API_KEY = "test-key";
+    process.env.OPENAI_API_KEY = "test-key";
     mockReadEscrow.mockResolvedValue({
       exists: true, customer: CUSTOMER, vault: VAULT, token: TOKEN, state: 0, tokenBalance: 0n,
     });
@@ -99,19 +99,54 @@ describe("escrow → fund → run flow", () => {
     mockReadEscrow.mockResolvedValue({
       exists: true, customer: CUSTOMER, vault: VAULT, token: TOKEN, state: 1, tokenBalance: 1_000_000n,
     });
+    // Funding starts the team by itself now — no tap needed. The fund
+    // response says so, the job is in-progress, and the Investigator's
+    // checks are in the log.
     const funded = await post(postFund, hire.id, { txHash: FUND_TX });
     expect(funded.status).toBe(200);
+    expect(funded.body.autoStarted).toBe(true);
     const afterFund = (await getHire(hire.id))!;
-    expect(afterFund.status).toBe("escrowed");
+    expect(afterFund.status).toBe("in-progress");
     expect(afterFund.fundTxHash).toBe(FUND_TX);
     expect(afterFund.escrowState).toBe("funded");
+    expect(await getReport(hire.id)).not.toBeNull();
     const decisions = await (await getLedger()).listDecisions(hire.id);
     expect(decisions.filter((d) => d.kind === "escrow").map((d) => d.txHash)).toContain(FUND_TX);
+    expect(decisions.some((d) => d.kind === "investigate")).toBe(true);
 
-    // The gate is open now: the run starts.
+    // The gate is open now: the run starts — here it is already
+    // running, so /run answers 202 with where it is.
     const started = await post(postRun, hire.id, {});
     expect(started.status).toBe(202);
     expect((await getHire(hire.id))?.status).toBe("in-progress");
+  });
+
+  it("funding starts the run, but a failed Investigator check leaves the job escrowed with the button available", async () => {
+    const hire = await createHire({ jobType: "flyers", description: "Flyers for a market stall", customerWallet: CUSTOMER });
+    const escrowed = await post(postEscrow, hire.id, { escrowAddress: ESCROW, txHash: DEPLOY_TX });
+    expect(escrowed.status).toBe(200);
+    // The $1 is in (FUNDED, holding the full price) — but the escrow
+    // onchain now holds a different token than the job was priced in,
+    // so the Investigator fails the start.
+    mockReadEscrow.mockResolvedValue({
+      exists: true, customer: CUSTOMER, vault: VAULT, token: "0x00000000000000000000000000000000000000bb", state: 1, tokenBalance: 1_000_000n,
+    });
+    const funded = await post(postFund, hire.id, { txHash: FUND_TX });
+    // The fund itself still succeeds — the $1 is in. Only the start
+    // is refused, and the response says why.
+    expect(funded.status).toBe(200);
+    expect(funded.body.autoStarted).toBe(false);
+    expect(String(funded.body.autoStartError ?? "")).toMatch(/different token/);
+    const afterFund = (await getHire(hire.id))!;
+    expect(afterFund.status).toBe("escrowed");
+    expect(afterFund.fundTxHash).toBe(FUND_TX);
+    // Nothing started: no report, and the customer can still tap
+    // "Start the work" — which refuses again in plain words.
+    expect(await getReport(hire.id)).toBeNull();
+    const manual = await post(postRun, hire.id, {});
+    expect(manual.status).toBe(400);
+    expect(manual.body.error).toMatch(/different token/);
+    expect((await getHire(hire.id))?.status).toBe("escrowed");
   });
 
   it("refuses an escrow that belongs to someone else, or isn't a contract", async () => {
@@ -191,7 +226,8 @@ describe("escrow → fund → run flow", () => {
       });
       const funded = await post(postFund, hire.id, { txHash: FUND_TX });
       expect(funded.status).toBe(200);
-      expect((await getHire(hire.id))?.status).toBe("escrowed");
+      expect(funded.body.autoStarted).toBe(true);
+      expect((await getHire(hire.id))?.status).toBe("in-progress");
     } finally {
       if (savedVault === undefined) delete process.env.IKENGA_CNGN_VAULT_ADDRESS;
       else process.env.IKENGA_CNGN_VAULT_ADDRESS = savedVault;

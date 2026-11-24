@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MAINNET_TOKEN_ADDRESS,
   MAINNET_VAULT_ADDRESS,
+  MAX_STEP_CALLS_PER_JOB_PER_RUN,
+  driveInProgressJobs,
   loadEnvFile,
   parseEnvFile,
   reportToDeliverableContent,
@@ -158,5 +160,68 @@ describe("reportToDeliverableContent", () => {
       html: "<h1>Ada's Kitchen</h1>",
       slides: [{ title: "Real food", text: "Home cooking." }],
     });
+  });
+});
+
+describe("driveInProgressJobs — the page-closed case", () => {
+  it("drives an in-progress job stage by stage until done, and skips jobs that are not in-progress", async () => {
+    const calls: string[] = [];
+    let steps = 0;
+    const fetchStep = async (jobId: string) => {
+      calls.push(jobId);
+      steps += 1;
+      // Two stages, then the job is delivered.
+      return { status: 200, done: steps >= 3 };
+    };
+    const result = await driveInProgressJobs(
+      [
+        { id: "job-a", status: "in-progress" },
+        { id: "job-b", status: "delivered" },
+        { id: "job-c", status: "escrowed" },
+      ],
+      fetchStep,
+    );
+    expect(calls).toEqual(["job-a", "job-a", "job-a"]);
+    expect(result).toEqual({ jobsDriven: 1, stagesDriven: 3, delivered: ["job-a"] });
+  });
+
+  it("caps the calls per job — a job that never finishes waits for the next run", async () => {
+    let calls = 0;
+    const fetchStep = async () => {
+      calls += 1;
+      return { status: 200, done: false };
+    };
+    const result = await driveInProgressJobs([{ id: "job-a", status: "in-progress" }], fetchStep);
+    expect(calls).toBe(MAX_STEP_CALLS_PER_JOB_PER_RUN);
+    expect(result).toEqual({ jobsDriven: 1, stagesDriven: MAX_STEP_CALLS_PER_JOB_PER_RUN, delivered: [] });
+  });
+
+  it("stops a job on a failed stage call and drives nothing for it", async () => {
+    let calls = 0;
+    const fetchStep = async () => {
+      calls += 1;
+      return { status: 500, done: false };
+    };
+    const result = await driveInProgressJobs([{ id: "job-a", status: "in-progress" }], fetchStep);
+    expect(calls).toBe(1);
+    expect(result).toEqual({ jobsDriven: 0, stagesDriven: 0, delivered: [] });
+  });
+
+  it("caps the total calls across jobs in one run", async () => {
+    let calls = 0;
+    const fetchStep = async () => {
+      calls += 1;
+      return { status: 200, done: false };
+    };
+    const jobs = [
+      { id: "job-a", status: "in-progress" },
+      { id: "job-b", status: "in-progress" },
+      { id: "job-c", status: "in-progress" },
+      { id: "job-d", status: "in-progress" },
+    ];
+    const result = await driveInProgressJobs(jobs, fetchStep, { maxTotal: 5 });
+    expect(calls).toBe(5);
+    expect(result.stagesDriven).toBe(5);
+    expect(result.jobsDriven).toBe(2);
   });
 });

@@ -12,6 +12,12 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  // The app compiles JSX with the automatic runtime (Next.js), so the
+  // tests must too — otherwise a component file's JSX needs React in
+  // scope, which the app never imports.
+  esbuild: {
+    jsx: "automatic",
+  },
   server: {
     fs: {
       allow: [fileURLToPath(new URL("../..", import.meta.url))],

@@ -54,6 +54,12 @@
  * through the repo's own sendTagged(), so it carries the ERC-8021
  * attribution tag.
  *
+ * Pass 2b — in-progress jobs: the team starts by itself when the $1
+ * is confirmed, and the job page drives the stages while it is open —
+ * when the customer closed the page, this worker drives the stages
+ * through POST /api/jobs/[id]/run/step instead (capped per job and
+ * per run; no key, no money, no on-chain action).
+ *
  * Pass 3 — naira bills (mainnet only: there is no Celo testnet
  * corridor). The worker polls GET /api/bills and runs the pipeline in
  * ./bills.ts: live preview, funding check, firm quote at or above the
@@ -102,6 +108,12 @@ export const CELO_SEPOLIA_RPC_URL = "https://rpc.ankr.com/celo_sepolia";
 export const DEFAULT_SITE_URL = "https://ikenga-two.vercel.app";
 /** On-chain actions per run — a run that hits the cap leaves the rest for the next run. */
 export const MAX_ACTIONS_PER_RUN = 10;
+/** /run/step calls per in-progress job per run — a run that hits the
+ * cap leaves the rest for the next run (the worker runs every 5 min,
+ * so a 9-stage job still finishes within ~15 min with the page closed). */
+export const MAX_STEP_CALLS_PER_JOB_PER_RUN = 3;
+/** /run/step calls in total per run, same spirit as the on-chain cap. */
+export const MAX_STEP_CALLS_PER_RUN = 10;
 /** Job statuses where an escrow may still need registering. Accepted /
  * refunded / rejected jobs are done — registering theirs helps no one. */
 const REGISTERABLE_STATUSES = new Set(["draft", "escrowed", "in-progress", "delivered"]);
@@ -250,6 +262,53 @@ export function reportToDeliverableContent(report: {
   return Object.keys(content).length > 0 ? content : null;
 }
 
+/**
+ * Drive the stages of in-progress jobs through the site's POST
+ * /run/step — for jobs whose customer closed the page after funding.
+ * The team starts by itself when the $1 is confirmed (see the /fund
+ * route), the job page drives the stages itself while it is open, and
+ * this covers the page-closed case: the next worker run picks the job
+ * up and moves it forward.
+ *
+ * Pure except for the fetchStep it is given, so it is easy to test:
+ * the worker passes a closure over its own fetch, tests pass a fake.
+ * Each call runs ONE stage (under the 60s limit, same as the page).
+ * Caps: at most MAX_STEP_CALLS_PER_JOB_PER_RUN calls per job and
+ * MAX_STEP_CALLS_PER_RUN in total, so one run cannot hang. A
+ * non-200 answer (a stage failed, or the job is not in-progress any
+ * more) stops that job for this run — the next run retries it. The
+ * `done` flag means the job reached delivered (or refused); the
+ * delivered job ids come back so the caller can log them.
+ */
+export async function driveInProgressJobs(
+  jobs: { id: string; status: string }[],
+  fetchStep: (jobId: string) => Promise<{ status: number; done: boolean }>,
+  opts?: { maxPerJob?: number; maxTotal?: number },
+): Promise<{ jobsDriven: number; stagesDriven: number; delivered: string[] }> {
+  const maxPerJob = opts?.maxPerJob ?? MAX_STEP_CALLS_PER_JOB_PER_RUN;
+  const maxTotal = opts?.maxTotal ?? MAX_STEP_CALLS_PER_RUN;
+  let jobsDriven = 0;
+  let stagesDriven = 0;
+  const delivered: string[] = [];
+  for (const job of jobs) {
+    if (stagesDriven >= maxTotal) break;
+    if (job.status !== "in-progress") continue;
+    let drove = false;
+    for (let i = 0; i < maxPerJob && stagesDriven < maxTotal; i++) {
+      const res = await fetchStep(job.id);
+      if (res.status !== 200) break;
+      stagesDriven += 1;
+      drove = true;
+      if (res.done) {
+        delivered.push(job.id);
+        break;
+      }
+    }
+    if (drove) jobsDriven += 1;
+  }
+  return { jobsDriven, stagesDriven, delivered };
+}
+
 interface ChainInfo {
   chainId: number;
   vaultAddress: string;
@@ -265,6 +324,7 @@ async function fetchJson(url: string, init?: RequestInit): Promise<{ status: num
 export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promise<{
   registered: number;
   sealed: number;
+  stagesDriven: number;
   billsChecked: number;
   billsConverted: number;
   billsPaid: number;
@@ -494,6 +554,30 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
     }
   }
 
+  // Pass 2b — drive stages: in-progress jobs whose customer closed
+  // the page (the page drives the stages itself while it is open).
+  // No key, no money, no on-chain action — just the site's step
+  // route, capped per job and per run (see driveInProgressJobs).
+  let stagesDriven = 0;
+  {
+    const drive = await driveInProgressJobs(jobs, async (jobId) => {
+      try {
+        const res = await fetchJson(`${config.siteUrl}/api/jobs/${jobId}/run/step`, { method: "POST" });
+        return { status: res.status, done: res.body.done === true };
+      } catch (err) {
+        log(`job ${jobId}: driving stages failed (${err instanceof Error ? err.message : "unknown error"}) — leaving it for the next run.`);
+        return { status: 0, done: false };
+      }
+    });
+    stagesDriven = drive.stagesDriven;
+    if (drive.jobsDriven > 0) {
+      log(`stages: drove ${drive.stagesDriven} stage(s) across ${drive.jobsDriven} in-progress job(s).`);
+    }
+    for (const jobId of drive.delivered) {
+      log(`job ${jobId}: stages finished — the job is delivered.`);
+    }
+  }
+
   // Pass 3 — naira bills (mainnet only: there is no Celo testnet
   // corridor). The pipeline lives in ./bills.ts; this is only the wiring
   // of real clients around it. A failure here never breaks the job work
@@ -621,8 +705,8 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
     }
   }
 
-  log(`done — ${registered} escrow(s) registered, ${sealed} deliverable(s) sealed, ${billsChecked} bill(s) checked, ${billsConverted} converted, ${billsPaid} paid, ${actions} action(s).`);
-  return { registered, sealed, billsChecked, billsConverted, billsPaid };
+  log(`done — ${registered} escrow(s) registered, ${sealed} deliverable(s) sealed, ${stagesDriven} stage(s) driven, ${billsChecked} bill(s) checked, ${billsConverted} converted, ${billsPaid} paid, ${actions} action(s).`);
+  return { registered, sealed, stagesDriven, billsChecked, billsConverted, billsPaid };
 }
 
 if (process.argv[1]?.endsWith("boss-worker.js")) {

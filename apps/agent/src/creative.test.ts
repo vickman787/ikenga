@@ -8,7 +8,7 @@ import {
   CREATIVE_MODEL_BUDGET_USD,
   type CreativeProgress,
 } from "./creative.js";
-import type { FortyTwoReply } from "./fortytwo.js";
+import type { OpenAIReply } from "./openai.js";
 
 /**
  * Fake chat keyed on the role in the prompt. The build replies are
@@ -17,7 +17,7 @@ import type { FortyTwoReply } from "./fortytwo.js";
  */
 function fakeChat(script: Record<string, string | ((prompt: string) => string)>) {
   const calls: { model: string; prompt: string }[] = [];
-  const chat = async (input: { model: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<FortyTwoReply> => {
+  const chat = async (input: { model: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<OpenAIReply> => {
     const prompt = input.messages.map((m) => m.content).join("\n");
     calls.push({ model: input.model, prompt });
     const key = Object.keys(script).find((k) => prompt.includes(k)) ?? "default";
@@ -195,7 +195,7 @@ describe("runCreative — website (fake models)", () => {
       "You are Auditor": "PASS\nFine.",
     });
     // Every call costs $0.60 — past the cap on the first call's worst case.
-    const expensiveChat = async (input: Parameters<typeof chat>[0]): Promise<FortyTwoReply> => {
+    const expensiveChat = async (input: Parameters<typeof chat>[0]): Promise<OpenAIReply> => {
       const reply = await chat(input);
       return { ...reply, costUsd: 0.6, usage: { promptTokens: 100000, completionTokens: 100000, totalTokens: 200000 } };
     };

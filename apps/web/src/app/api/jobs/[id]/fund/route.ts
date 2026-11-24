@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getChainConfig, getHire, getLedger, readEscrowOnchain, setHireStatus, verifyTxReceipt } from "@/lib/jobs";
+import { getChainConfig, getHire, getLedger, readEscrowOnchain, setHireStatus, startFreshRun, verifyTxReceipt } from "@/lib/jobs";
 
 /**
  * POST /api/jobs/[id]/fund — confirm the $1 has landed in the escrow.
@@ -8,8 +8,15 @@ import { getChainConfig, getHire, getLedger, readEscrowOnchain, setHireStatus, v
  *
  * The server checks the receipt onchain (it must have succeeded), then
  * reads the escrow itself: it must be FUNDED and hold at least $1. Only
- * then does the job move to "escrowed" — the state the team needs before
- * it starts. Anything else is a plain-words 400.
+ * then does the job move to "escrowed" — and the team starts straight
+ * away, with no tap needed: the same start the /run route does
+ * (Investigator gate, Self check record, empty report, in-progress).
+ * If the start cannot happen (a failed check, no AI key), the job
+ * stays escrowed and the customer can still tap "Start the work" —
+ * the button stays as the manual fallback. The fund itself is never
+ * refused because the start failed: the $1 is in, and the response
+ * says whether the team started (autoStarted) and why not if it did
+ * not (autoStartError).
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -87,5 +94,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     txHash: body.txHash,
     entry: `escrow|${hire.payCurrency}|Customer paid ${jobPriceLabel} into escrow.|${hire.priceAtomic}`,
   });
-  return NextResponse.json({ job: await getHire(id) });
+  // The $1 is in — start the team now, with no tap needed. A start
+  // that cannot happen never fails the fund: the job stays escrowed
+  // and "Start the work" is still there as the fallback.
+  let autoStarted = false;
+  let autoStartError: string | undefined;
+  try {
+    const started = await startFreshRun(id);
+    autoStarted = started.ok;
+    if (!started.ok) autoStartError = started.error;
+  } catch (err) {
+    autoStartError = err instanceof Error ? err.message : "unknown error";
+  }
+  return NextResponse.json({
+    job: await getHire(id),
+    autoStarted,
+    ...(autoStartError ? { autoStartError } : {}),
+  });
 }

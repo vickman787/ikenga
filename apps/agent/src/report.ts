@@ -52,13 +52,13 @@
  * flow with fakes and never spend a cent or touch the network.
  */
 import {
-  FORTYTWO_MODEL_AUDIT,
-  FORTYTWO_MODEL_WORK,
+  OPENAI_MODEL_AUDIT,
+  OPENAI_MODEL_WORK,
   approxTokens,
-  chatFortyTwo,
+  chatOpenAI,
   worstCaseCostUsd,
-  type FortyTwoReply,
-} from "./fortytwo.js";
+  type OpenAIReply,
+} from "./openai.js";
 import { fetchPageText, searchBing, searchWeb, searchWikipedia, type SearchResult, type SourcePage } from "./search.js";
 import { deliverWork } from "./messenger.js";
 
@@ -204,7 +204,7 @@ export function progressToResult(p: ReportProgress): MarketReportResult {
 }
 
 export interface RunReportDeps {
-  chat?: (input: { model: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; maxTokens?: number; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }) => Promise<FortyTwoReply>;
+  chat?: (input: { model: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; maxTokens?: number; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }) => Promise<OpenAIReply>;
   search?: (query: string, limit?: number) => Promise<SearchResult[]>;
   /** Primary web search (Bing). Defaults to the real one. */
   searchBing?: (query: string, limit?: number) => Promise<SearchResult[]>;
@@ -302,10 +302,10 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
   }
   if (p.status !== "in-progress" || p.stage === 0) return p;
 
-  const rawChat = deps.chat ?? (async (c) => chatFortyTwo(c));
+  const rawChat = deps.chat ?? (async (c) => chatOpenAI(c));
   /** One chat call; if the model answers with nothing (its thinking ate
    * the token budget), try once more with twice the budget. */
-  const chat = async (c: Parameters<NonNullable<RunReportDeps["chat"]>>[0]): Promise<FortyTwoReply> => {
+  const chat = async (c: Parameters<NonNullable<RunReportDeps["chat"]>>[0]): Promise<OpenAIReply> => {
     const first = await rawChat(c);
     if (first.text.trim().length > 0) return first;
     return rawChat({ ...c, maxTokens: (c.maxTokens ?? 1024) * 2 });
@@ -315,7 +315,7 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
   const wiki = deps.wiki ?? searchWikipedia;
   const fetchPage = deps.fetchPage ?? fetchPageText;
 
-  const charge = (reply: FortyTwoReply, agent: ReportStep["agent"], what: string) => {
+  const charge = (reply: OpenAIReply, agent: ReportStep["agent"], what: string) => {
     p.totalTokens += reply.usage.totalTokens;
     p.totalCostUsd = Math.round((p.totalCostUsd + reply.costUsd) * 1_000_000) / 1_000_000;
     p.steps.push({ agent, what, detail: "", model: reply.model, tokens: reply.usage.totalTokens, costUsd: reply.costUsd });
@@ -412,20 +412,20 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
   // --- Stage 2, Researcher + Writer: a short plan, then the report. ---
   if (p.stage === REPORT_STAGE_WRITE) {
     const planPrompt = `You are Researcher, planning a short market report for a small business owner in Nigeria.\n\nThe job: ${brief}\n\nWhat Reader pulled out of the pages (only use facts from here):\n${sourceText}\n\nWrite a short plan: the businesses or options to compare, the prices or facts worth checking, and what the customer should take away. Keep it under 200 words. Only use facts from the sources above — do not invent any business, price or number.`;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, planPrompt, 600)) {
+    if (!withinBudget(OPENAI_MODEL_WORK, planPrompt, 600)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const plan = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: planPrompt }], maxTokens: 1000, reasoningEffort: "low" });
+    const plan = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: planPrompt }], maxTokens: 1000, reasoningEffort: "low" });
     charge(plan, "Researcher", "Turned the brief and what Reader pulled out into a short plan.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     p.plan = stripCodeFences(plan.text);
     p.steps[p.steps.length - 1].detail = p.plan.slice(0, 400);
 
     const writePrompt = `You are Writer, writing a market report for a small business owner in Nigeria. Write in plain, warm, human words — no jargon, no filler. Write the report ENTIRELY in your own words.\n\nThe job: ${brief}\n${p.revisionNote ? `The customer asked for a change: ${p.revisionNote}\n` : ""}\nThe plan:\n${p.plan}\n\n--- SOURCES (fact-checking only — do NOT copy, paste or quote them) ---\n${sourceText}\n--- END OF SOURCES ---\n\nWrite the report as markdown with these parts:\n- A short summary (2–3 sentences): what you found, in plain words.\n- The businesses or options found, each with what they do and any price you actually found. If a price was not in the sources, write "price not listed" — never guess a price.\n- What it means for the customer: which option fits what kind of business, and why.\n- Things to watch out for: anything the sources disagree on, or that could not be checked.\n- Sources: list them by number and title with their link, exactly as given above.\n\nRules: under 500 words. Every fact must come from the sources above — do not invent any business, price, number or fact. If something is not in the sources, say so. Never paste the source text into the report.`;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, writePrompt, 1800)) {
+    if (!withinBudget(OPENAI_MODEL_WORK, writePrompt, 1800)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const draft = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: writePrompt }], maxTokens: 1200 });
+    const draft = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: writePrompt }], maxTokens: 1200 });
     charge(draft, "Writer", "Wrote the report from the plan and the sources.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     p.steps[p.steps.length - 1].detail = `About ${draft.text.split(/\s+/).length} words, from ${p.pages.length} sources.`;
@@ -436,10 +436,10 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
   // --- Stage 3, Analyst: check every number against the sources. ---
   if (p.stage === REPORT_STAGE_CHECK) {
     const checkPrompt = `You are Analyst, checking a market report against its sources.\n\nThe report:\n${p.report}\n\nThe sources:\n${sourceText}\n\nList every number, price and date in the report, and for each one say whether it appears in the sources or not. End with one line: either "ALL NUMBERS CHECK OUT" or "PROBLEMS:" followed by the list of numbers that could not be checked. Do not add new facts.`;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, checkPrompt, 800)) {
+    if (!withinBudget(OPENAI_MODEL_WORK, checkPrompt, 800)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const check = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], maxTokens: 2000, reasoningEffort: "low" });
+    const check = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], maxTokens: 2000, reasoningEffort: "low" });
     charge(check, "Analyst", "Checked every number, price and date against the sources.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     p.checkText = stripCodeFences(check.text);
@@ -451,10 +451,10 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
   if (p.stage === REPORT_STAGE_AUDIT_FACTS || p.stage === REPORT_STAGE_REAUDIT_FACTS) {
     const isReaudit = p.stage === REPORT_STAGE_REAUDIT_FACTS;
     const prompt = auditFactsPrompt(p.report, p.checkText, auditSourcesText(p.pages));
-    if (!withinBudget(FORTYTWO_MODEL_AUDIT, prompt, 600)) {
+    if (!withinBudget(OPENAI_MODEL_AUDIT, prompt, 600)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const facts = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 600, reasoningEffort: "low" });
+    const facts = await chat({ model: OPENAI_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 600, reasoningEffort: "low" });
     charge(facts, "Auditor", isReaudit ? "Checked the revised facts against the sources." : "Checked every fact against the sources.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     const factsText = stripCodeFences(facts.text);
@@ -470,10 +470,10 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
   if (p.stage === REPORT_STAGE_AUDIT_FINAL || p.stage === REPORT_STAGE_REAUDIT_FINAL) {
     const isReaudit = p.stage === REPORT_STAGE_REAUDIT_FINAL;
     const prompt = auditFinalPrompt(p.report, p.checkText, p.auditFacts);
-    if (!withinBudget(FORTYTWO_MODEL_AUDIT, prompt, 800)) {
+    if (!withinBudget(OPENAI_MODEL_AUDIT, prompt, 800)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const audit = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 800, reasoningEffort: "low" });
+    const audit = await chat({ model: OPENAI_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 800, reasoningEffort: "low" });
     charge(audit, "Auditor", isReaudit ? "Read the revised report again." : "Read the report on a different model, before it reaches you.");
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");
     const auditText = stripCodeFences(audit.text);
@@ -498,10 +498,10 @@ export async function runReportStage(progress: ReportProgress, deps: RunReportDe
   // --- Stage 6, Writer revises once, fixing what the final read flagged. ---
   if (p.stage === REPORT_STAGE_REVISE) {
     const fixPrompt = `You are Writer. The Auditor read your report and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${p.auditFinal}\n\nThe facts check said:\n${p.auditFacts}\n\nThe report:\n${p.report}\n\nThe sources (only use facts from here):\n${sourceText}\n\nReturn the full corrected report as markdown, same shape as before, under 500 words. Do not invent any fact.`;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, fixPrompt, 1200)) {
+    if (!withinBudget(OPENAI_MODEL_WORK, fixPrompt, 1200)) {
       return refuse("The report would cost more than the $0.50 set aside for it, so it stopped before spending anything.");
     }
-    const fixed = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: 1200 });
+    const fixed = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: 1200 });
     charge(fixed, "Writer", "Revised the report once, fixing what the Auditor flagged.");
     p.steps[p.steps.length - 1].detail = `Revised to about ${stripCodeFences(fixed.text).split(/\s+/).length} words.`;
     if (overBudget()) return refuse("The report already cost more than the $0.50 set aside for it, so it stopped instead of spending more.");

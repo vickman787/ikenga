@@ -1,16 +1,16 @@
 /**
  * Local end-to-end market-report run (manual, not a test — it spends real
- * FortyTwo credits, a few cents).
+ * OpenAI credits, a few cents).
  *
  * Usage (key from env, never printed or logged):
- *   FORTYTWO_API_KEY=... pnpm --filter @ikenga/agent run:report "Compare payment options for my shop in Lagos"
+ *   OPENAI_API_KEY=... pnpm --filter @ikenga/agent run:report "Compare payment options for my shop in Lagos"
  *
  * Prints the agent steps, the token/cost totals, and the report itself.
  * The key is read from the environment only; this script never prints it.
  */
 import { writeFileSync } from "node:fs";
 import { runMarketReport } from "./report.js";
-import { resolveFortyTwoKey } from "./fortytwo.js";
+import { resolveOpenAIKey } from "./openai.js";
 
 const brief = process.argv.slice(2).join(" ").trim();
 if (!brief) {
@@ -18,7 +18,7 @@ if (!brief) {
   process.exit(2);
 }
 // Fail fast with a plain message when the AI is not connected.
-resolveFortyTwoKey();
+resolveOpenAIKey();
 
 const result = await runMarketReport({ brief });
 console.log(`Status: ${result.status}`);

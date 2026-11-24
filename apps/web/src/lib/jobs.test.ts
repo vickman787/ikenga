@@ -522,7 +522,7 @@ describe("summarizeHires — the landing page's live numbers", () => {
 
   it("excludes the three known test runs and keeps Amaka's real job", () => {
     const s = summarizeHires([
-      // FortyTwo key test — delivered, never funded, dummy wallet.
+      // OpenAI key test — delivered, never funded, dummy wallet.
       hire({ id: "ord_mwsc5dbd_7d9s76", status: "delivered", customerWallet: "0x0000000000000000000000000000000000000001", escrowAddress: null, fundTxHash: null, tokenAddress: "", vaultAddress: "", escrowState: null }),
       // Sepolia end-to-end — accepted on testnet, test wallet, no funding recorded on the live row.
       hire({ id: "ord_mwssqak9_tsinmi", status: "accepted", customerWallet: "0x94CcF19e6e12B64272D3b4946Dc34a9Ae9B74C50", escrowAddress: null, fundTxHash: null, tokenAddress: "", vaultAddress: "", escrowState: null }),

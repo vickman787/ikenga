@@ -118,7 +118,7 @@ export interface RunJobDeps {
   sendCngn?: (to: string, amountAtomic: string) => Promise<{ txHash: string }>;
   /**
    * Do the creative work. Default: a market-report job is really done by
-   * the team (Scout, Researcher, Writer, Analyst, Auditor, on FortyTwo);
+   * the team (Scout, Researcher, Writer, Analyst, Auditor, on OpenAI);
    * every other job type is still a labelled stub until its own delivery
    * is built.
    */
@@ -213,7 +213,7 @@ export class AgentRunner {
     let report: MarketReportResult | undefined;
     const work = deps.doWork
       ? await deps.doWork(input.jobType)
-      : input.jobType === "market-report" && process.env.FORTYTWO_API_KEY
+      : input.jobType === "market-report" && process.env.OPENAI_API_KEY
         ? await (async () => {
             const r = await runMarketReport({ brief: input.description ?? "Market report" });
             report = r;

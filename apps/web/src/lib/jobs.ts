@@ -40,7 +40,7 @@ import celoDeploy from "../../../../contracts/deployments/celo.json";
 /** On-chain escrow checks, from @ikenga/payments (viem lives there —
 // the web app has no viem dependency of its own). The routes import
 // them from here. */
-import { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifyTxReceipt } from "@ikenga/payments";
+import { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifySelfAgentId, verifyTxReceipt } from "@ikenga/payments";
 export { readEscrowDeliverableHash, readEscrowOnchain, readVaultOnchain, resolveAttributionTag, verifyTxReceipt };
 import { resolveAttributionTag as resolveTag, TextileClient, TEXTILE_CELO_TOKENS, cngnJobPrice } from "@ikenga/payments";
 import { IKENGA_AGENT_WALLET } from "./agentRegistration";
@@ -562,6 +562,136 @@ export function emptyStoredCreative(jobType: JobType): StoredReport {
     deliverableKind: deliverableKindFor(jobType),
     html: "",
     slides: [],
+  };
+}
+
+export type StartFreshRunResult =
+  | { ok: true; job: HireResult; report: StoredReport; nextStage: number; nextStep: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Start a fresh run of the team on an escrowed job — the same start the
+ * /run route does, shared with the /fund route so the team starts as
+ * soon as the $1 is confirmed in the escrow, with no tap needed.
+ *
+ * Gates, in order: the job must exist and be escrowed (the $1 in); the
+ * AI key must be set; Investigator checks the escrow onchain and every
+ * check is written to the money log (a failed check, or an unreadable
+ * chain, leaves the job escrowed); the Self check is recorded honestly
+ * but never blocks the work. Then the status moves to in-progress and
+ * an empty report is stored — the stages run one at a time through
+ * /run/step after that, driven by the job page while it is open, or by
+ * the boss worker when it is not.
+ *
+ * A refused start never throws — it comes back ok:false with a
+ * plain-words error and the HTTP status the caller should answer with.
+ * A throw means something unexpected (the ledger is down); the caller
+ * turns that into a 502.
+ */
+export async function startFreshRun(id: string): Promise<StartFreshRunResult> {
+  const hire = await getHire(id);
+  if (!hire) return { ok: false, status: 404, error: "Job not found" };
+  const isReport = hire.jobType === "market-report";
+  if (hire.status !== "escrowed") {
+    return { ok: false, status: 400, error: "Pay the $1 into escrow first — the team starts once the money is in." };
+  }
+  if (!process.env.OPENAI_API_KEY) {
+    return {
+      ok: false,
+      status: 503,
+      error: "The AI is not connected yet — the team cannot start the work until its key is set on the server.",
+    };
+  }
+  // Investigator checks the escrow onchain before the team starts:
+  // it must be a real contract, and its customer, token, vault, price
+  // and funded state must match this job. Every check is written to
+  // the log. A failed check stops the job in plain words — the $1
+  // stays in escrow and nothing is spent. An unreadable chain waits —
+  // the job stays escrowed, so the customer can start it again.
+  const ledger = await getLedger();
+  const investigation = await investigateHireEscrow(hire);
+  // Writing the checks to the log must not fail silently into an empty
+  // 500: when the log cannot take them, say so in plain words and do
+  // not start the job without its audit trail. (This caught a real
+  // bug: the decision_log CHECK list did not allow 'investigate'.)
+  try {
+    for (let i = 0; i < investigation.checks.length; i++) {
+      const check = investigation.checks[i];
+      await ledger.appendDecision({
+        id: `dec_${id}_investigate_${i}_${Date.now()}`,
+        orderId: id,
+        kind: "investigate",
+        reason: `Investigator: ${check.detail}`,
+        amountMicroUsdc: 0,
+        signature: "0xikenga-step2",
+        entry: `investigate|job|${check.name}|${check.result}|${check.detail}`,
+      });
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status: 502,
+      error: `The checks could not be written to the money log — try starting the work again in a moment. (${err instanceof Error ? err.message : "unknown error"})`,
+    };
+  }
+  if (!investigation.readable) {
+    return {
+      ok: false,
+      status: 502,
+      error: "Investigator could not read the escrow onchain right now — try starting the work again in a moment.",
+    };
+  }
+  if (!investigation.passed) {
+    return { ok: false, status: 400, error: investigation.summary };
+  }
+  // Record the Self check honestly — it governs payment, and the $1 is
+  // held in escrow for this job.
+  try {
+    const agentAddress = (process.env.SELF_AGENT_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
+    const self = await verifySelfAgentId(agentAddress, process.env.SELF_AGENT_ID);
+    await ledger.recordSelfVerification({
+      id: `self_${id}_${Date.now()}`,
+      agentId: self.agentId,
+      agentAddress: self.agentAddress,
+      verified: self.verified,
+      reason: self.reason,
+      expiresAt: self.expiresAt ?? null,
+      checkedAt: self.checkedAt,
+    });
+    await ledger.appendDecision({
+      id: `dec_${id}_self_${Date.now()}`,
+      orderId: id,
+      kind: self.verified ? "self-verify" : "self-refuse",
+      reason: self.verified
+        ? "Agent identity verified — the team can be paid for this job."
+        : `Agent identity not verified yet (${self.reason}) — the $1 stays in escrow.`,
+      amountMicroUsdc: 0,
+      signature: "0xikenga-step2",
+      entry: `self|${self.verified}|${self.reason}|0`,
+    });
+  } catch (err) {
+    // A failed identity check never stops the work — it is logged.
+    await ledger.appendDecision({
+      id: `dec_${id}_self_${Date.now()}`,
+      orderId: id,
+      kind: "self-refuse",
+      reason: `Agent identity check could not run (${err instanceof Error ? err.message : "unknown error"}) — the $1 stays in escrow.`,
+      amountMicroUsdc: 0,
+      signature: "0xikenga-step2",
+      entry: `self|check-failed|0`,
+    });
+  }
+
+  await setHireStatus(id, "in-progress");
+  const stored = isReport ? emptyStoredReport() : emptyStoredCreative(hire.jobType);
+  await setReport(id, stored);
+  const job = await getHire(id);
+  return {
+    ok: true,
+    job: job!,
+    report: stored,
+    nextStage: stored.stage,
+    nextStep: deliveryStageLabel(hire.jobType, stored.stage),
   };
 }
 

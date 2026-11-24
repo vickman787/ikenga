@@ -15,15 +15,15 @@ import Nav from "@/components/Nav";
  */
 
 const TEAM: { name: string; role: string; line: string; buys: string; pays: string }[] = [
-  { name: "Scout", role: "Finds things", line: "Searches the web for the businesses, pages and sources your brief asks for.", buys: "Search and maps", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
-  { name: "Researcher", role: "Turns sentences into plans", line: "Turns your sentence into a short plan, then pulls the facts out of what Reader found.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
-  { name: "Reader", role: "Reads what matters", line: "Opens the pages Scout found and pulls out the words that matter for your brief.", buys: "Page reading", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
-  { name: "Writer", role: "Writes the words", line: "Writes your report and the words for your website, flyer and slideshow — only from the facts it was given, never invented.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
-  { name: "Designer", role: "Builds and designs", line: "Builds your one-page website and your flyer and price list, in your colours.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
-  { name: "Producer", role: "Makes the motion", line: "Puts your promo slideshow together — moving slides with your words, not a video file.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Scout", role: "Finds things", line: "Searches the web for the businesses, pages and sources your brief asks for.", buys: "Search and maps", pays: "Thinking paid from our OpenAI account — the CFO tracks it" },
+  { name: "Researcher", role: "Turns sentences into plans", line: "Turns your sentence into a short plan, then pulls the facts out of what Reader found.", buys: "AI models", pays: "Thinking paid from our OpenAI account — the CFO tracks it" },
+  { name: "Reader", role: "Reads what matters", line: "Opens the pages Scout found and pulls out the words that matter for your brief.", buys: "Page reading", pays: "Thinking paid from our OpenAI account — the CFO tracks it" },
+  { name: "Writer", role: "Writes the words", line: "Writes your report and the words for your website, flyer and slideshow — only from the facts it was given, never invented.", buys: "AI models", pays: "Thinking paid from our OpenAI account — the CFO tracks it" },
+  { name: "Designer", role: "Builds and designs", line: "Builds your one-page website and your flyer and price list, in your colours.", buys: "AI models", pays: "Thinking paid from our OpenAI account — the CFO tracks it" },
+  { name: "Producer", role: "Makes the motion", line: "Puts your promo slideshow together — moving slides with your words, not a video file.", buys: "AI models", pays: "Thinking paid from our OpenAI account — the CFO tracks it" },
   { name: "Investigator", role: "Checks before money moves", line: "Checks your wallet and the job's escrow on Celo before the team starts — and checks the supplier before a naira bill is paid. It only claims the checks it really runs: no sanctions or KYC check exists here.", buys: "Wallet and contract checks", pays: "Checks only read the chain — they cost nothing" },
-  { name: "Analyst", role: "Compares the numbers", line: "Compares prices, answers and signals: the numbers on every report.", buys: "AI models", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
-  { name: "Auditor", role: "Checks the work twice", line: "Checks the work on a different AI before it is delivered.", buys: "A second model family", pays: "Thinking paid from our FortyTwo credit — the CFO tracks it" },
+  { name: "Analyst", role: "Compares the numbers", line: "Compares prices, answers and signals: the numbers on every report.", buys: "AI models", pays: "Thinking paid from our OpenAI account — the CFO tracks it" },
+  { name: "Auditor", role: "Checks the work twice", line: "Checks the work on a different AI before it is delivered.", buys: "A second model", pays: "Thinking paid from our OpenAI account — the CFO tracks it" },
   { name: "Messenger", role: "Gets it to you", line: "Packs the finished work, seals its fingerprint, and delivers it on your job page.", buys: "Delivery", pays: "Delivery lives on your job page — no charge" },
 ];
 
@@ -825,7 +825,7 @@ export default function Home() {
               </h2>
               <p style={{ marginTop: 16, fontSize: "var(--lede)", color: "var(--ink-2)", maxWidth: 640 }}>
                 Each one does one job, and one job only. The thinking is
-                paid from our FortyTwo AI credit, and the CFO tracks what
+                paid from our OpenAI account, and the CFO tracks what
                 each agent spends. Your $1 is separate: it waits in
                 escrow on Celo, moved through x402, until you accept
                 the work.
@@ -853,8 +853,8 @@ export default function Home() {
               ))}
             </div>
             <p style={{ marginTop: 20, color: "var(--muted)", fontSize: 14, lineHeight: 1.6 }}>
-              About the money: the thinking is paid from our FortyTwo AI
-              credit — the CFO tracks what each agent spends, and the log
+              About the money: the thinking is paid from our OpenAI
+              account — the CFO tracks what each agent spends, and the log
               shows it. Your $1 is separate: it waits in escrow on Celo,
               moved through x402, and only moves when you accept the work.
             </p>

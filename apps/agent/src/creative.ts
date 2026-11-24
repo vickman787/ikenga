@@ -60,13 +60,13 @@
  * with fakes and never spend a cent or touch the network.
  */
 import {
-  FORTYTWO_MODEL_AUDIT,
-  FORTYTWO_MODEL_WORK,
+  OPENAI_MODEL_AUDIT,
+  OPENAI_MODEL_WORK,
   approxTokens,
-  chatFortyTwo,
+  chatOpenAI,
   worstCaseCostUsd,
-  type FortyTwoReply,
-} from "./fortytwo.js";
+  type OpenAIReply,
+} from "./openai.js";
 import { deliverWork } from "./messenger.js";
 
 export const CREATIVE_MODEL_BUDGET_USD = 0.5;
@@ -233,7 +233,7 @@ export function creativeProgressToResult(p: CreativeProgress): CreativeResult {
 }
 
 export interface RunCreativeDeps {
-  chat?: (input: { model: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; maxTokens?: number; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }) => Promise<FortyTwoReply>;
+  chat?: (input: { model: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; maxTokens?: number; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }) => Promise<OpenAIReply>;
   /** Extra instructions from the customer ("ask for one free revision"). */
   revisionNote?: string;
   /** Facts already read (a revision reuses them — no new read). */
@@ -380,16 +380,16 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
   }
   if (p.status !== "in-progress" || p.stage === 0) return p;
 
-  const rawChat = deps.chat ?? (async (c) => chatFortyTwo(c));
+  const rawChat = deps.chat ?? (async (c) => chatOpenAI(c));
   /** One chat call; if the model answers with nothing (its thinking ate
    * the token budget), try once more with twice the budget. */
-  const chat = async (c: Parameters<NonNullable<RunCreativeDeps["chat"]>>[0]): Promise<FortyTwoReply> => {
+  const chat = async (c: Parameters<NonNullable<RunCreativeDeps["chat"]>>[0]): Promise<OpenAIReply> => {
     const first = await rawChat(c);
     if (first.text.trim().length > 0) return first;
     return rawChat({ ...c, maxTokens: (c.maxTokens ?? 1024) * 2 });
   };
 
-  const charge = (reply: FortyTwoReply, agent: CreativeStep["agent"], what: string) => {
+  const charge = (reply: OpenAIReply, agent: CreativeStep["agent"], what: string) => {
     p.totalTokens += reply.usage.totalTokens;
     p.totalCostUsd = Math.round((p.totalCostUsd + reply.costUsd) * 1_000_000) / 1_000_000;
     p.steps.push({ agent, what, detail: "", model: reply.model, tokens: reply.usage.totalTokens, costUsd: reply.costUsd });
@@ -426,17 +426,17 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
       return { ...p, stage: CREATIVE_STAGE_BUILD };
     }
     const factsPrompt = `You are ${builder}, reading a customer's brief for a ${noun} for a small business in Nigeria.\n\nThe brief:\n${brief}\n\nReply with JSON ONLY, in this shape: {"businessName": "...", "whatItDoes": "...", "services": ["..."], "prices": [{"item": "...", "price": "...", "listed": true}], "contact": "...", "colours": "...", "notes": "..."}.\n\nRules: only use facts from the brief. If the brief does not name the business, leave businessName empty. If a price is not in the brief, do not list it as a price — either leave it out of prices or list it with listed: false and price: "price not listed". Never invent a business name, a price, a phone number, an address or a service. If the brief has no usable facts at all, reply with {"businessName": "", "whatItDoes": "", "services": [], "prices": [], "contact": "", "colours": "", "notes": "no usable facts in the brief"}.`;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, factsPrompt, 800)) {
+    if (!withinBudget(OPENAI_MODEL_WORK, factsPrompt, 800)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const read = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: factsPrompt }], maxTokens: 1200, reasoningEffort: "low" });
+    const read = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: factsPrompt }], maxTokens: 1200, reasoningEffort: "low" });
     charge(read, builder, `Read the brief.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
     let facts = parseFacts(read.text);
     if (!facts) {
       // One retry: the model may have answered in words instead of JSON.
       const retry = await chat({
-        model: FORTYTWO_MODEL_WORK,
+        model: OPENAI_MODEL_WORK,
         messages: [{ role: "user", content: `${factsPrompt}\n\nReply with JSON only — no words before or after it.` }],
         maxTokens: 1200,
         reasoningEffort: "low",
@@ -469,10 +469,10 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
   if (p.stage === CREATIVE_STAGE_BUILD) {
     const prompt = buildPrompt(jobType, facts, p.revisionNote);
     const maxTokens = jobType === "promo-video" ? 1200 : 4000;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, prompt, maxTokens)) {
+    if (!withinBudget(OPENAI_MODEL_WORK, prompt, maxTokens)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const built = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: prompt }], maxTokens });
+    const built = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: prompt }], maxTokens });
     charge(built, builder, jobType === "promo-video" ? "Put the slideshow together from the brief." : `Built the ${noun} from the brief.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
     if (jobType === "promo-video") {
@@ -498,10 +498,10 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
   // --- Stage 3, Analyst: check every word, price and number against the facts. ---
   if (p.stage === CREATIVE_STAGE_CHECK) {
     const checkPrompt = `You are Analyst, checking a ${noun} against the brief it was built from.\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts from the brief (the only facts allowed):\n${factsText(facts)}\n\nList every business name, service, price, phone number and address in the ${noun}, and for each one say whether it is in the facts or not. End with one line: either "ALL FACTS CHECK OUT" or "PROBLEMS:" followed by the list of words that could not be checked. Do not add new facts. A price shown as "price not listed" is fine.`;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, checkPrompt, 800)) {
+    if (!withinBudget(OPENAI_MODEL_WORK, checkPrompt, 800)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const check = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], maxTokens: 2000, reasoningEffort: "low" });
+    const check = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], maxTokens: 2000, reasoningEffort: "low" });
     charge(check, "Analyst", `Checked every word, price and phone number against the brief.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
     p.checkText = stripCodeFences(check.text);
@@ -513,10 +513,10 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
   if (p.stage === CREATIVE_STAGE_AUDIT || p.stage === CREATIVE_STAGE_REAUDIT) {
     const isReaudit = p.stage === CREATIVE_STAGE_REAUDIT;
     const prompt = auditPrompt(jobType, facts, deliverableText(), p.checkText);
-    if (!withinBudget(FORTYTWO_MODEL_AUDIT, prompt, 600)) {
+    if (!withinBudget(OPENAI_MODEL_AUDIT, prompt, 600)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const audit = await chat({ model: FORTYTWO_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 1500, reasoningEffort: "low" });
+    const audit = await chat({ model: OPENAI_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 1500, reasoningEffort: "low" });
     charge(audit, "Auditor", isReaudit ? `Read the revised ${noun} again.` : `Read the ${noun} on a different model, before it reaches you.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
     const auditText = stripCodeFences(audit.text);
@@ -536,10 +536,10 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
         ? `You are Producer. The Auditor read your slideshow and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe slideshow:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn JSON ONLY, same shape as before: {"slides": [{"title": "...", "text": "..."}]}. Do not invent any fact.`
         : `You are ${builder}. The Auditor read your ${noun} and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn the full corrected ${noun} as HTML, same shape as before. Do not invent any fact. No JavaScript, no external pictures, no forms.`;
     const fixMaxTokens = jobType === "promo-video" ? 1200 : 4000;
-    if (!withinBudget(FORTYTWO_MODEL_WORK, fixPrompt, fixMaxTokens)) {
+    if (!withinBudget(OPENAI_MODEL_WORK, fixPrompt, fixMaxTokens)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const fixed = await chat({ model: FORTYTWO_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: fixMaxTokens });
+    const fixed = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: fixMaxTokens });
     charge(fixed, builder, `Revised the ${noun} once, fixing what the Auditor flagged.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
     if (jobType === "promo-video") {

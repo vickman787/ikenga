@@ -21,7 +21,7 @@ async function seed() {
   const ledger = new MemoryLedger();
   setLedgerForTests(ledger);
   const orders = [
-    // FortyTwo key test — delivered, never funded, dummy wallet.
+    // OpenAI key test — delivered, never funded, dummy wallet.
     { id: "ord_mwsc5dbd_7d9s76", jobType: "market-report", customerWallet: DUMMY_WALLET, description: "test", status: "delivered", tokenAddress: null, vaultAddress: null },
     // Sepolia end-to-end — accepted on testnet, test wallet, no funding recorded on the live row.
     { id: "ord_mwssqak9_tsinmi", jobType: "market-report", customerWallet: SEPOLIA_WALLET, description: "test", status: "accepted", tokenAddress: null, vaultAddress: null },

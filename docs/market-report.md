@@ -25,7 +25,7 @@ with a plain note.
 
 ## Scout — the search
 
-FortyTwo is chat-only, it cannot search the web, so Scout has its own
+OpenAI is chat-only, it cannot search the web, so Scout has its own
 search: **Bing** first (free, no key — result pages are parsed from
 `bing.com/search`), **Wikipedia API** as a reliable backup for facts
 about a named business, **DuckDuckGo Lite** as a second backup (it is
@@ -70,7 +70,7 @@ identity check is still pending and the team can write but cannot be paid.
 ## The routes
 
 - `POST /api/jobs/[id]/run` — starts the team (all four job types).
-  Needs `FORTYTWO_API_KEY` on the server, or it says plainly that the AI
+  Needs `OPENAI_API_KEY` on the server, or it says plainly that the AI
   is not connected yet. Answers straight away (202) with the next stage.
 - `POST /api/jobs/[id]/run/step` — runs ONE stage (under 60s). The job
   page calls it until the work is delivered. A whole report takes a few
@@ -87,7 +87,7 @@ identity check is still pending and the team can write but cannot be paid.
 
 ## Known limits
 
-- The live site needs `FORTYTWO_API_KEY` set in Vercel Production
+- The live site needs `OPENAI_API_KEY` set in Vercel Production
   before any hire can run there.
 - Prices/fees rarely appear in the free sources Scout can read, so
   reports usually say "price not listed" for fees — provider pricing

@@ -50,9 +50,9 @@ production server 200 with `/api/cfo`, `/api/traction`, `/api/jobs/[id]` live.
   → FX leg → cNGN payout).
 - ✅ **All four jobs are real now.** The market report (Scout searches
   the web for free — Bing first, Wikipedia backup — Researcher plans,
-  Writer writes, Analyst checks the numbers, all on FortyTwo's Nemotron
-  3.5 Super VL, then the Auditor reads it on a different model,
-  DeepSeek V4.1 Flash, in two short calls — facts first, then a final
+  Writer writes, Analyst checks the numbers, all on OpenAI's gpt-4o-mini,
+  then the Auditor reads it on a different model,
+  gpt-4o, in two short calls — facts first, then a final
   read) plus the website and flyers (Designer builds a real page
   from the brief, Analyst checks every word and price against it,
   Auditor reads it) and the promo video (Producer puts a motion
@@ -62,7 +62,7 @@ production server 200 with `/api/cfo`, `/api/traction`, `/api/jobs/[id]` live.
   page shows who did what, the delivered work, and accept / one free
   revision / turn it down. The website and flyer pages are shown in a
   sandboxed frame with scripts switched off. See
-  `docs/market-report.md`. Needs `FORTYTWO_API_KEY` on the server.
+  `docs/market-report.md`. Needs `OPENAI_API_KEY` on the server.
 - 🛑 **Blocked — needs the user:** named real user + obligation; Self
   registration (human QR scan + passport/ID); funded test wallet +
   `X402_API_KEY`; attribution tag from Loops registration; Sepolia deploy.
