@@ -8,7 +8,6 @@ interface LiveNumbers {
   vaults: TreasuryVault[] | null;
   vault: { operating: string; tools: string; bond: string; reserve: string; total: string } | null;
   vaultError: boolean;
-  decisions: number | null;
   onchainDecisions: number | null;
   verifyOk: boolean | null;
   jobs: number | null;
@@ -22,7 +21,6 @@ function useLiveNumbers(): LiveNumbers {
     vaults: null,
     vault: null,
     vaultError: false,
-    decisions: null,
     onchainDecisions: null,
     verifyOk: null,
     jobs: null,
@@ -40,7 +38,7 @@ function useLiveNumbers(): LiveNumbers {
           buckets?: { operating: string; tools: string; bond: string; reserve: string };
         } | null;
         const cfoJson = (await cfoRes.json().catch(() => null)) as {
-          verify?: { ok: boolean; entries: number };
+          verify?: { ok: boolean };
           onchainDecisions?: number;
           summary?: { jobs: number; done: number; settled: number; customers: number };
         } | null;
@@ -56,7 +54,6 @@ function useLiveNumbers(): LiveNumbers {
               }
             : null,
           vaultError: !vaultRes.ok,
-          decisions: cfoRes.ok ? (cfoJson?.verify?.entries ?? null) : null,
           onchainDecisions: cfoRes.ok
             ? (cfoJson?.onchainDecisions ?? null)
             : null,

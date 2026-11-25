@@ -1,3 +1,4 @@
+import { GET as auditSummary } from "../cfo/route";
 /**
  * GET /api/traction counts real jobs only, while the decision log stays
  * complete. Seeded with the four live orders as they actually stand:
@@ -67,17 +68,18 @@ async function seed() {
   return ledger;
 }
 
-describe("GET /api/traction — real jobs only, log stays complete", () => {
-  it("counts 2 real jobs, 2 real customers, and all 6 log entries", async () => {
+describe("GET /api/traction — public customer totals", () => {
+  it("counts real jobs and customers without publishing operational diagnostics", async () => {
     await seed();
     const res = await GET();
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.jobsStarted).toBe(2);
     expect(body.customers).toBe(2);
-    // The log itself stays whole: one decision per order, test runs included.
-    expect(body.decisions).toBe(6);
-    expect(body.x402).toEqual({ settled: 0, unresolved: 0, failed: 0 });
-    expect(body.fxSwaps).toBe(0);
-    expect(String(body.note)).toContain("real jobs only");
+    expect(Object.keys(body).sort()).toEqual(["customers", "jobsStarted"]);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const audit = await (await auditSummary()).json();
+    expect(audit.verify).toEqual({ok:true});
+    expect(audit.summary.jobs).toBe(2);
+    expect(JSON.stringify(audit)).not.toMatch(/backend|mode|ordersChecked|excludedTestJobs|firstDoneJobId|reason|orderId|entries/);
   });
 });

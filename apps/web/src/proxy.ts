@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { privateJson, sameOrigin, walletSession } from "@/lib/walletSession";
-import { publicActivity } from "@/lib/publicActivity";
+import { publicActivity, publicTraction } from "@/lib/publicActivity";
 
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -28,11 +28,12 @@ export async function proxy(request: NextRequest) {
   try {
     const response = await fetch(new URL(pathname + search, "https://www.useikenga.xyz"), { method: request.method, headers: { accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(25_000) });
     // Private routes must be checked here too: the older production API has no ownership checks yet.
-    if (jobPath || pathname === "/api/cfo") {
+    if (jobPath || pathname === "/api/cfo" || pathname === "/api/traction") {
       if (request.method === "HEAD") return new NextResponse(null, { status: 405 });
       const data = await response.json();
       if (!response.ok) return privateJson({ error: "The live record could not be read." }, response.status);
       if (pathname === "/api/cfo") return privateJson(publicActivity(data));
+      if (pathname === "/api/traction") return privateJson(publicTraction(data));
       if (!jobPath![1]) {
         const jobs = Array.isArray(data.jobs) ? data.jobs.filter((job: {customerWallet?: string}) => job.customerWallet?.toLowerCase() === address!.toLowerCase()) : [];
         return privateJson({ jobs });

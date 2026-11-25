@@ -40,8 +40,7 @@ const GROUPS: { title: string; items: [string, string, string?][] }[] = [
   {
     title: "Proof",
     items: [
-      ["/api/cfo", "The CFO's signed log"],
-      ["/api/traction", "Live numbers"],
+      ["/activity", "Activity & transparency"],
       ["https://github.com/vickman787/ikenga", "Source code"],
     ],
   },

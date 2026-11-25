@@ -101,3 +101,14 @@ describe("private job authorization boundary",()=>{
     expect((await proxy(ownerRequest("/api/jobs/"+id+"/decision",OWNER,"POST"))).status).toBe(405);
   });
 });
+
+it("redacts internal metadata from the old upstream audit and traction APIs in previews", async () => {
+  vi.stubEnv("NEXT_PUBLIC_IKENGA_READ_ONLY", "1");
+  vi.stubGlobal("fetch",vi.fn().mockImplementation(async (url:URL) => new Response(JSON.stringify(url.pathname === "/api/cfo" ? {backend:"postgres",mode:"live",summary:{jobs:4,done:4,settled:4,customers:4,excludedTestJobs:7,firstDoneJobId:"private-id"},verify:{ok:true,entries:122,ordersChecked:11},decisions:[{orderId:"private-id",reason:"private brief",txHash:"0xabc"}]} : {jobsStarted:4,customers:4,backend:"postgres",decisions:122,x402:{failed:5}}))));
+  const audit = await (await proxy(new NextRequest("https://preview.example/api/cfo"))).json();
+  expect(audit.verify).toEqual({ok:true});
+  expect(audit.summary).toEqual({jobs:4,done:4,settled:4,customers:4});
+  expect(JSON.stringify(audit)).not.toMatch(/postgres|private-id|private brief|excludedTestJobs|ordersChecked|entries/);
+  const traction = await (await proxy(new NextRequest("https://preview.example/api/traction"))).json();
+  expect(traction).toEqual({jobsStarted:4,customers:4});
+});
