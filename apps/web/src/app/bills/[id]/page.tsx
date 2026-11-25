@@ -213,7 +213,14 @@ export default function BillPage() {
 
   const statusWords: Record<string, string> = {
     created: "We have your bill. The next check runs every few minutes — it looks at the rate and at the USDT in the agent wallet.",
-    watching: bill?.note ?? "Watching the rate. Nothing has moved yet.",
+    watching: paidAtomic > 0n && neededAtomic !== null &&
+      (bill?.note?.startsWith("To pay this bill we need") || bill?.note?.startsWith("You paid $"))
+      ? remainingAtomic > 0n
+        ? `Payment received — ${formatUsdtDollars(remainingAtomic)} USDT more is needed at the latest rate.`
+        : bill.lastRate !== null && bill.lastRate < bill.minRate
+          ? "Payment received — waiting for your target rate."
+          : "Payment received — waiting for the next processing check."
+      : bill?.note ?? "Watching the rate. Nothing has moved yet.",
     converting: "The money is being changed and paid — the cNGN is on its way to your supplier.",
     paid: "Paid. Your supplier has the cNGN.",
     failed: bill?.note ?? "Something went wrong — nothing was paid. The receipt below says what happened.",
@@ -448,3 +455,4 @@ export default function BillPage() {
     </>
   );
 }
+
