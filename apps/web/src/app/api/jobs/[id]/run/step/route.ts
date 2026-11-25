@@ -1,3 +1,4 @@
+import { requireJobAccess } from "@/lib/jobAccess";
 import { NextResponse } from "next/server";
 import { runCreativeStage, runReportStage, type CreativeJobType } from "@ikenga/agent";
 import { JOB_LABELS } from "@ikenga/shared";
@@ -27,8 +28,10 @@ import {
  */
 export const maxDuration = 60;
 
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
+  const denial = await requireJobAccess(req, id);
+  if (denial) return denial;
   const hire = await getHire(id);
   if (!hire) return NextResponse.json({ error: "Job not found" }, { status: 404 });
   if (!process.env.OPENAI_API_KEY) {

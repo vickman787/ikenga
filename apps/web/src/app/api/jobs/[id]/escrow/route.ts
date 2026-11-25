@@ -1,3 +1,4 @@
+import { requireJobAccess } from "@/lib/jobAccess";
 import { NextResponse } from "next/server";
 import { getChainConfig, getHire, getLedger, readEscrowOnchain } from "@/lib/jobs";
 
@@ -15,6 +16,8 @@ import { getChainConfig, getHire, getLedger, readEscrowOnchain } from "@/lib/job
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
+  const denial = await requireJobAccess(req, id);
+  if (denial) return denial;
   const hire = await getHire(id);
   if (!hire) return NextResponse.json({ error: "Job not found" }, { status: 404 });
   const body = (await req.json().catch(() => ({}))) as { escrowAddress?: string; txHash?: string };

@@ -187,6 +187,8 @@ export const JOB_ESCROW_BYTECODE: Hex = "0x61012060405234801562000011575f80fd5b5
 
 /** The wallet injected into the page (a browser extension). */
 export interface InjectedProvider {
+  on?(event: string, listener: (...args: unknown[]) => void): void;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): void;
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
 }
 

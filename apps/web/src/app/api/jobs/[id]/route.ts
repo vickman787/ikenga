@@ -1,9 +1,12 @@
+import { requireJobAccess } from "@/lib/jobAccess";
 import { NextResponse } from "next/server";
 import { deliveryStageLabel } from "@/lib/jobs";
 import { getHire, getLedger, getReport, ledgerBackend } from "@/lib/jobs";
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
+  const denial = await requireJobAccess(req, id);
+  if (denial) return denial;
   const hire = await getHire(id);
   if (!hire) return NextResponse.json({ error: "job not found" }, { status: 404 });
   const ledger = await getLedger();
@@ -27,5 +30,5 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     verify: { ok: chainOk },
     fxSwaps,
     reconciliation,
-  });
+  }, { headers: { "cache-control": "private, no-store", "vary": "Cookie" } });
 }

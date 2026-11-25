@@ -15,7 +15,6 @@ interface LiveNumbers {
   done: number | null;
   settled: number | null;
   customers: number | null;
-  firstDoneJobId: string | null;
 }
 
 function useLiveNumbers(): LiveNumbers {
@@ -30,7 +29,6 @@ function useLiveNumbers(): LiveNumbers {
     done: null,
     settled: null,
     customers: null,
-    firstDoneJobId: null,
   });
   useEffect(() => {
     let cancelled = false;
@@ -43,8 +41,8 @@ function useLiveNumbers(): LiveNumbers {
         } | null;
         const cfoJson = (await cfoRes.json().catch(() => null)) as {
           verify?: { ok: boolean; entries: number };
-          decisions?: { txHash: string | null }[];
-          summary?: { jobs: number; done: number; settled: number; customers: number; firstDoneJobId: string | null };
+          onchainDecisions?: number;
+          summary?: { jobs: number; done: number; settled: number; customers: number };
         } | null;
         if (cancelled) return;
         setLive({
@@ -60,14 +58,13 @@ function useLiveNumbers(): LiveNumbers {
           vaultError: !vaultRes.ok,
           decisions: cfoRes.ok ? (cfoJson?.verify?.entries ?? null) : null,
           onchainDecisions: cfoRes.ok
-            ? (cfoJson?.decisions?.filter((d) => d.txHash).length ?? null)
+            ? (cfoJson?.onchainDecisions ?? null)
             : null,
           verifyOk: cfoRes.ok ? (cfoJson?.verify?.ok ?? null) : null,
           jobs: cfoRes.ok ? (cfoJson?.summary?.jobs ?? null) : null,
           done: cfoRes.ok ? (cfoJson?.summary?.done ?? null) : null,
           settled: cfoRes.ok ? (cfoJson?.summary?.settled ?? null) : null,
           customers: cfoRes.ok ? (cfoJson?.summary?.customers ?? null) : null,
-          firstDoneJobId: cfoRes.ok ? (cfoJson?.summary?.firstDoneJobId ?? null) : null,
         });
       } catch {
         if (!cancelled) setLive((prev) => ({ ...prev, vaultError: true }));
