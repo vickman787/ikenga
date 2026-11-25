@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { type JobType } from "@ikenga/shared";
 import "./workspace.css";
 
-type IconName = "grid" | "work" | "wallet" | "team" | "book" | "plus" | "shield" | "globe" | "play" | "flyer" | "chart" | "search" | "check" | "menu";
+type IconName = "grid" | "work" | "wallet" | "team" | "book" | "plus" | "shield" | "globe" | "play" | "flyer" | "chart" | "search" | "check" | "menu" | "compass" | "pen" | "palette" | "clipboard" | "send";
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
     grid: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
@@ -21,9 +21,26 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
     search: <><circle cx="10" cy="10" r="7" /><path d="m15 15 6 6" /></>,
     check: <path d="m5 12 4 4L19 6" />,
     menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+    compass: <><circle cx="12" cy="12" r="9" /><path d="m16 8-2.5 5.5L8 16l2.5-5.5Z" /></>,
+    pen: <><path d="m16 3 5 5L9 20l-6 1 1-6ZM13 6l5 5M4 15l5 5" /></>,
+    palette: <><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.5-3.3 1.5 1.5 0 0 1 1.1-2.5H18a3 3 0 0 0 3-3C21 7 17 3 12 3Z" /><circle cx="7" cy="11" r=".8" /><circle cx="10" cy="7" r=".8" /><circle cx="15" cy="7" r=".8" /><circle cx="18" cy="11" r=".8" /></>,
+    clipboard: <><path d="M9 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3" /><rect x="9" y="2" width="6" height="4" rx="1" /><path d="m8 13 3 3 5-6" /></>,
+    send: <><path d="m22 2-7 20-4-9-9-4ZM11 13 22 2" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
+const TEAM: { name: string; role: string; icon: IconName }[] = [
+  { name: "Scout", role: "Finds the sources", icon: "search" },
+  { name: "Researcher", role: "Builds the plan", icon: "compass" },
+  { name: "Reader", role: "Reads the sources", icon: "book" },
+  { name: "Writer", role: "Finds the words", icon: "pen" },
+  { name: "Designer", role: "Brings it to life", icon: "palette" },
+  { name: "Producer", role: "Creates the motion", icon: "play" },
+  { name: "Investigator", role: "Checks the escrow", icon: "shield" },
+  { name: "Analyst", role: "Checks the details", icon: "chart" },
+  { name: "Auditor", role: "Reviews the result", icon: "clipboard" },
+  { name: "Messenger", role: "Delivers your work", icon: "send" },
+];
 const SERVICES: { id: JobType; title: string; detail: string; icon: IconName; tag: string }[] = [
   { id: "website", title: "Business website", detail: "A home for your business. Your services, your story, and a way for customers to reach you.", icon: "globe", tag: "Your business, online" },
   { id: "flyers", title: "Flyers & price list", detail: "Your best offers, beautifully presented. Clear prices and your brand, ready to share.", icon: "flyer", tag: "Make a good impression" },
@@ -104,7 +121,7 @@ export default function WorkspaceHome({ live, children }: { live: Live; children
         </section>
         <section id="how" className="ws-section"><div className="ws-section-heading"><div><span className="ws-eyebrow">FROM BRIEF TO BETTER BUSINESS</span><h2>A small job. A straightforward process.</h2></div></div><div className="ws-how-grid">{([{ icon: "book", title: "Tell us what you need", text: "Choose a service and write a short brief. See the price before you pay." }, { icon: "shield", title: "Fund your job securely", text: "Use your Celo wallet. Your payment goes into the job’s escrow contract." }, { icon: "team", title: "Let the team get to work", text: "Follow the research, creation, and quality checks from your job page." }, { icon: "check", title: "Review. Then decide.", text: "Accept the result, request one revision, or reject for a refund. The escrow has a 48-hour release deadline from funding." }] as const).map(step => <div className="ws-how-card" key={step.title}><Icon name={step.icon} size={23} /><h3>{step.title}</h3><p>{step.text}</p></div>)}</div></section>
         <div className="ws-bottom-grid"><section id="cfo" className="ws-cfo"><span className="ws-eyebrow">THE AI CFO</span><h2>Creative minds.<br />Accountable money.</h2><p>The team creates. Code sets the price and controls the money. Decision records are hash-chained. Each job includes its own activity trail.</p><div className="ws-cfo-value"><span>Jobs accepted</span><b>{live.settled ?? "—"}</b></div><div className="ws-cfo-value"><span>Audit chain</span><b>{live.verifyOk === null ? "Awaiting data" : live.verifyOk ? "Verified" : "Check required"}</b></div><a className="ws-text-link" href="/activity#audit">View audit summary</a></section><section id="ikenga-pay" className="ws-pay"><span className="ws-pay-symbol"><Icon name="wallet" size={28} /></span><span className="ws-eyebrow">IKENGA PAY</span><h2>Your bill is in naira.<br />Your wallet is in USDT.</h2><p>Set up a naira bill and a target exchange rate. Ikenga converts USDT to cNGN through Textile FX and pays your supplier’s Celo wallet.</p><a className="ws-button ws-button--dark" href="/bills">Pay a naira bill</a><small>On Celo · no bank transfer option</small></section></div>
-        <section className="ws-section" id="team"><div className="ws-section-heading"><div><h2>A team behind every task.</h2><p>Different roles. One shared brief. Follow their steps on your job page.</p></div></div><div className="ws-team">{[["S", "Scout", "Finds the sources"], ["R", "Researcher", "Builds the plan"], ["R", "Reader", "Reads the sources"], ["W", "Writer", "Finds the words"], ["D", "Designer", "Brings it to life"], ["P", "Producer", "Creates the motion"], ["I", "Investigator", "Checks the escrow"], ["A", "Analyst", "Checks the details"], ["A", "Auditor", "Reviews the result"], ["M", "Messenger", "Delivers your work"]].map(([initial, name, role], i) => <div key={name}><span className={`ws-avatar ws-avatar--${i}`}>{initial}</span><div><b>{name}</b><small>{role}</small></div></div>)}</div></section>
+        <section className="ws-section" id="team"><div className="ws-section-heading"><div><h2>A team behind every task.</h2><p>Different roles. One shared brief. Follow their steps on your job page.</p></div></div><div className="ws-team">{TEAM.map(({ name, role, icon }, i) => <div key={name}><span className={`ws-avatar ws-avatar--${i}`}><Icon name={icon} size={18} /></span><div><b>{name}</b><small>{role}</small></div></div>)}</div></section>
         <section className="ws-section" id="money">
           <div className="ws-section-heading"><div><span className="ws-eyebrow">FOLLOW THE MONEY</span><h2>From your payment to the audit trail.</h2><p>Escrow, treasury, agent allowances, tool payments, and a record of the decisions.</p></div></div>
           <div className="ws-treasury"><div className="ws-treasury-heading"><div><h3>Treasury buckets</h3><p>Each currency has its own vault. Balances below come from the existing onchain vault API.</p></div><span className="ws-network-badge"><span />Celo</span></div>
@@ -120,7 +137,7 @@ export default function WorkspaceHome({ live, children }: { live: Live; children
           <div className="ws-money-grid">{[["Customer escrow", "Your payment goes into your job’s contract. Acceptance, rejection, and deadline release follow its existing rules."], ["Treasury", "Released payments reach the appropriate vault. The contract controls bucket movements and per-call limits."], ["Agent allowances", "The vault tracks hired agents and limits their tool allowances within its weekly budget."], ["Tool payments", "The payment package supports x402 and approved sellers. Model usage is paid through the configured OpenAI account."], ["Audit trail", "Every recorded decision is hash-chained. Onchain receipts link back to their transactions; cryptographic signing is not yet enabled."]].map(([title, text]) => <article key={title}><h3>{title}</h3><p>{text}</p></article>)}</div>
           <div className="ws-proof-links"><a href="/activity#audit">Audit summary</a><a href="/activity">Live activity numbers</a><span>{live.onchainDecisions ?? "—"} recorded onchain receipts</span><a href="https://github.com/vickman787/ikenga/blob/main/docs/spec.md" target="_blank" rel="noreferrer">CFO rules</a></div>
         </section>
-        <section className="ws-section ws-office" id="office"><div><span className="ws-eyebrow">THE OFFICE</span><h2>One brief. Ten roles. Work you can follow.</h2><p>Your job page keeps the team’s actual progress: sources gathered, work created, quality checks, and the delivery receipt.</p><a href="#work" className="ws-text-link">See activity totals</a></div><div className="ws-office-board">{["Scout", "Researcher", "Reader", "Writer", "Designer", "Producer", "Investigator", "Analyst", "Auditor", "Messenger"].map(name => <span key={name}><Icon name="team" size={17} />{name}</span>)}<small>Team overview · live progress appears on each job page</small></div></section>
+        <section className="ws-section ws-office" id="office"><div><span className="ws-eyebrow">THE OFFICE</span><h2>One brief. Ten roles. Work you can follow.</h2><p>Your job page keeps the team’s actual progress: sources gathered, work created, quality checks, and the delivery receipt.</p><a href="#work" className="ws-text-link">See activity totals</a></div><div className="ws-office-board">{TEAM.map(({ name, icon }) => <span key={name}><Icon name={icon} size={17} />{name}</span>)}<small>Team overview · live progress appears on each job page</small></div></section>
         <section className="ws-section" id="questions"><div className="ws-section-heading"><div><span className="ws-eyebrow">BEFORE YOU ORDER</span><h2>A few useful answers.</h2></div></div><div className="ws-faq">{[
           ["Do I need crypto?", "Yes. Connect a Celo wallet and pay in USDT or cNGN. You also need CELO for network fees. Bank transfer is not available."],
           ["What if I don’t like the work?", "You can request one free revision or reject the work for a refund through the existing escrow flow. New job escrows currently use a zero bond; there is no extra bond payout."],
@@ -138,3 +155,4 @@ export default function WorkspaceHome({ live, children }: { live: Live; children
     </div>
   </div>;
 }
+
