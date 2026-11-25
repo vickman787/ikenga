@@ -1948,3 +1948,5 @@ input[type="text"]:focus {
   text-transform: uppercase;
   color: var(--muted);
 }
+
+.review-banner { padding: 9px 18px; text-align: center; background: #edf5e5; border-bottom: 1px solid #d1e1c2; color: #355532; font: 500 12px/1.5 var(--font-sans); }

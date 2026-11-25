@@ -1,9 +1,10 @@
+import { signToken, SESSION_COOKIE } from "@/lib/walletSession";
 /**
  * Escrow route flow, with the on-chain reads mocked — no live RPC in
  * unit tests. Covers: create → escrow → fund → run gate, and the
  * decision route refusing a missing or invalid txHash.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryLedger } from "@ikenga/ledger";
 import { createHire, getHire, getLedger, getReport, setLedgerForTests } from "@/lib/jobs";
 import { POST as postEscrow } from "./escrow/route.js";
@@ -30,6 +31,9 @@ vi.mock("@ikenga/payments", async (importOriginal) => {
   };
 });
 
+beforeEach(() => vi.stubEnv("IKENGA_SESSION_SECRET", "test-only-32-character-session-secret"));
+afterEach(() => vi.unstubAllEnvs());
+
 const CUSTOMER = "0x0000000000000000000000000000000000000002";
 const ESCROW = "0x00000000000000000000000000000000000000aa";
 const VAULT = "0x1C2b2E64527B0bA7795ed3CDF7d76da51D24018B";
@@ -47,7 +51,7 @@ async function post(
   const res = await handler(
     new Request(`http://localhost/api/jobs/${id}/decision`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", origin: "http://localhost", cookie: SESSION_COOKIE + "=" + signToken({kind:"session",address:CUSTOMER,origin:"http://localhost",expires:Date.now()+60000}) },
       body: JSON.stringify(body),
     }),
     { params: Promise.resolve({ id }) },

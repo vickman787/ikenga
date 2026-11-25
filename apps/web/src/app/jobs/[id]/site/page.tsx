@@ -1,5 +1,6 @@
 "use client";
 
+import WalletGate from "@/components/WalletGate";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { JOB_LABELS, type JobType } from "@ikenga/shared";
@@ -10,7 +11,7 @@ import { JOB_LABELS, type JobType } from "@ikenga/shared";
  * off), with a plain bar on top saying what it is and who made it.
  * Other job types have nothing to show here.
  */
-export default function JobSitePage() {
+function JobSiteWorkspace() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [jobType, setJobType] = useState<JobType | null>(null);
@@ -108,3 +109,5 @@ export default function JobSitePage() {
     </main>
   );
 }
+
+export default function JobSitePage() { return <WalletGate><JobSiteWorkspace /></WalletGate>; }

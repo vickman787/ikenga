@@ -1,5 +1,6 @@
 "use client";
 
+import WalletGate from "@/components/WalletGate";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { JOB_LABELS, buildStandaloneSlideshowHtml, type JobType } from "@ikenga/shared";
@@ -201,7 +202,7 @@ function PagePreview({ jobId, jobType, html }: { jobId: string; jobType: JobType
   );
 }
 
-export default function JobPage() {
+function JobWorkspace() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [data, setData] = useState<JobDetail | null>(null);
@@ -379,7 +380,7 @@ export default function JobPage() {
 
   return (
     <main className="wrap" style={{ paddingTop: 48, paddingBottom: 96, maxWidth: 820 }}>
-      <a href="/#hire" style={{ fontSize: 14, color: "var(--muted)" }}>← Back to Ikenga</a>
+      <a href="/jobs" style={{ fontSize: 14, color: "var(--muted)" }}>← My jobs</a>
       {error && (
         <div className="card pad" style={{ marginTop: 24 }}>
           <h1 style={{ fontSize: 28 }}>Job not found</h1>
@@ -719,3 +720,5 @@ export default function JobPage() {
     </main>
   );
 }
+
+export default function JobPage() { return <WalletGate><JobWorkspace /></WalletGate>; }

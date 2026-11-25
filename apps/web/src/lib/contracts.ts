@@ -1,3 +1,5 @@
+import { assertWalletEnabled } from "./previewMode";
+
 /**
  * Browser-side money for Ikenga — plain viem + the wallet already in the
  * browser. No wagmi, no WalletConnect, no QR codes, no Reown, and no wallet
@@ -185,6 +187,8 @@ export const JOB_ESCROW_BYTECODE: Hex = "0x61012060405234801562000011575f80fd5b5
 
 /** The wallet injected into the page (a browser extension). */
 export interface InjectedProvider {
+  on?(event: string, listener: (...args: unknown[]) => void): void;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): void;
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
 }
 
@@ -275,6 +279,7 @@ async function sendTaggedCall(args: {
   to?: Address;
   data: Hex;
 }): Promise<Hex> {
+  assertWalletEnabled();
   const { wallet, pub, chain, to, data } = args;
   const txHash = await wallet.sendTransaction({
     account: wallet.account!,
@@ -292,6 +297,7 @@ async function sendTaggedCall(args: {
  * customer says no.
  */
 export async function connectInjected(): Promise<Address> {
+  assertWalletEnabled();
   const eth = injectedProvider();
   let accounts: unknown;
   try {

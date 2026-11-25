@@ -86,6 +86,7 @@ import {
   type PublicClient,
   type WalletClient,
 } from "viem";
+import { signedWorkerRequest } from "./worker-auth.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { celo, celoSepolia } from "viem/chains";
 import {
@@ -315,7 +316,7 @@ interface ChainInfo {
   tokenAddress: string;
 }
 
-async function fetchJson(url: string, init?: RequestInit): Promise<{ status: number; body: Record<string, unknown> }> {
+async function fetchPublicJson(url: string, init?: RequestInit): Promise<{ status: number; body: Record<string, unknown> }> {
   const res = await fetch(url, init);
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   return { status: res.status, body };
@@ -331,6 +332,12 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
 }> {
   loadEnvFile(env);
   const config = resolveBossConfig(env);
+  const account = privateKeyToAccount(config.bossPrivateKey);
+  const fetchJson = async (url: string, init?: RequestInit) => {
+    const target = new URL(url);
+    if (!target.pathname.startsWith("/api/jobs")) return fetchPublicJson(url, init);
+    return fetchPublicJson(url, await signedWorkerRequest(url, init, account));
+  };
   const log = (msg: string) => console.log(`[boss:${config.chain}] ${msg}`);
 
   log(`site ${config.siteUrl} — vault ${config.vaultAddress}`);
@@ -361,7 +368,7 @@ export async function runBossWorker(env: NodeJS.ProcessEnv = process.env): Promi
 
   const viemChain = config.chain === "mainnet" ? celo : celoSepolia;
   const publicClient: PublicClient = createPublicClient({ transport: http(config.rpcUrl) });
-  const account = privateKeyToAccount(config.bossPrivateKey);
+
   const walletClient: WalletClient = createWalletClient({ account, chain: viemChain, transport: http(config.rpcUrl) });
 
   // The vault only takes boss calls from its boss. Check before

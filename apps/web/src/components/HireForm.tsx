@@ -1,5 +1,6 @@
 "use client";
 
+import { ensureWalletSession } from "@/lib/walletLogin";
 import { useEffect, useState } from "react";
 import { JOB_LABELS, JOB_TYPES, type JobType } from "@ikenga/shared";
 import {
@@ -141,6 +142,7 @@ export function PayPanel({
       // Always ask the wallet which account is selected right now — the
       // customer may have switched accounts since connecting.
       const acct = await connectInjected();
+      await ensureWalletSession(acct);
       setAccount(acct);
       if (acct.toLowerCase() !== customerWallet.toLowerCase()) {
         throw new Error(
@@ -438,6 +440,7 @@ export default function HireForm() {
     }
     setBusy(true);
     try {
+      await ensureWalletSession(account);
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
