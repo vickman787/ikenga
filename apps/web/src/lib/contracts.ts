@@ -1,3 +1,5 @@
+import { assertWalletEnabled } from "./previewMode";
+
 /**
  * Browser-side money for Ikenga — plain viem + the wallet already in the
  * browser. No wagmi, no WalletConnect, no QR codes, no Reown, and no wallet
@@ -275,6 +277,7 @@ async function sendTaggedCall(args: {
   to?: Address;
   data: Hex;
 }): Promise<Hex> {
+  assertWalletEnabled();
   const { wallet, pub, chain, to, data } = args;
   const txHash = await wallet.sendTransaction({
     account: wallet.account!,
@@ -292,6 +295,7 @@ async function sendTaggedCall(args: {
  * customer says no.
  */
 export async function connectInjected(): Promise<Address> {
+  assertWalletEnabled();
   const eth = injectedProvider();
   let accounts: unknown;
   try {
