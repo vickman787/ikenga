@@ -32,3 +32,19 @@ it('does not start a recording after cancellation', async () => {
     controller.abort();
     await expect(exportPromoVideo([{ title: 'Ada', text: 'Call' }], { mime: 'video/mp4', extension: 'mp4' }, controller.signal, () => { })).rejects.toThrow('cancelled');
 });
+
+it.each([false, true])('releases the stream and listeners if recording cannot start (hidden=%s)', async (hidden) => {
+    const stopTrack = vi.fn();
+    const add = vi.fn(), remove = vi.fn(), start = vi.fn(() => { throw new Error('Encoder startup failed'); });
+    const ctx = { fillRect: vi.fn(), fillText: vi.fn(), save: vi.fn(), restore: vi.fn(), translate: vi.fn(), measureText: (text: string) => ({ width: text.length * 20 }) };
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ctx, captureStream: () => ({ getTracks: () => [{ stop: stopTrack }] }) }), addEventListener: add, removeEventListener: remove, hidden });
+    vi.stubGlobal('MediaRecorder', class { state = 'inactive'; start = start; });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const controller = new AbortController();
+    const removeAbort = vi.spyOn(controller.signal, 'removeEventListener');
+    await expect(exportPromoVideo([{ title: 'Sample', text: 'Order lunch' }], { mime: 'video/mp4', extension: 'mp4' }, controller.signal, () => {})).rejects.toThrow(hidden ? 'Keep this tab visible' : 'Encoder startup failed');
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+    expect(removeAbort).toHaveBeenCalledWith('abort', expect.any(Function));
+    expect(start).toHaveBeenCalledTimes(hidden ? 0 : 1);
+});

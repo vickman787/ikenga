@@ -188,7 +188,15 @@ export async function exportPromoVideo(slides: VideoSlide[], format: {
             resolve(new Blob(chunks, { type: recorder.mimeType || format.mime })); };
         signal.addEventListener('abort', cancel, { once: true });
         document.addEventListener('visibilitychange', hidden);
-        recorder.start(500);
+        if (signal.aborted) { cancel(); return; }
+        if (document.hidden) { hidden(); return; }
+        try { recorder.start(500); }
+        catch (error) {
+            done = true;
+            cleanup();
+            reject(error instanceof Error ? error : new Error('Recording could not start.'));
+            return;
+        }
         const started = performance.now();
         const tick = () => { if (done)
             return; try {

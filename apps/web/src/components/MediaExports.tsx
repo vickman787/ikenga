@@ -13,8 +13,13 @@ export default function MediaExports({ svg, slides }: {
         extension: string;
     } | null | undefined>(undefined);
     const controller = useRef<AbortController | null>(null);
-    useEffect(() => { if (typeof MediaRecorder !== 'undefined')
-        setFormat(videoFormat(type => MediaRecorder.isTypeSupported(type))); return () => controller.current?.abort(); }, []);
+    useEffect(() => {
+        try {
+            setFormat(typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function'
+                ? videoFormat(type => MediaRecorder.isTypeSupported(type)) : null);
+        } catch { setFormat(null); }
+        return () => controller.current?.abort();
+    }, []);
     async function flyer(kind: 'png' | 'pdf') { setBusy(true); setError(''); try {
         const canvas = await flyerCanvas(svg!);
         if (kind === 'png')
