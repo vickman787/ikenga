@@ -25,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        {process.env.NEXT_PUBLIC_IKENGA_READ_ONLY === "1" && <div className="review-banner" role="status">UI review · live public data · payments and changes disabled</div>}
+        {process.env.NEXT_PUBLIC_IKENGA_READ_ONLY === "1" && <div className="review-banner" role="status">UI review · payments and changes disabled · <a href="/examples" style={{color:"inherit",textDecoration:"underline"}}>Try the new exports</a></div>}
         {children}
       </body>
     </html>

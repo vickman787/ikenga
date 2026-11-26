@@ -1,4 +1,6 @@
 "use client";
+import { renderReport } from "@/lib/reportPresentation";
+import MediaExports from "@/components/MediaExports";
 
 import WalletGate from "@/components/WalletGate";
 import { useEffect, useRef, useState } from "react";
@@ -79,6 +81,7 @@ interface JobDetail {
     stage: number;
     deliverableKind?: "report" | "website" | "flyer" | "slideshow";
     html?: string;
+    designSvg?: string;
     slides?: { title: string; text: string; image?: string }[];
   } | null;
   nextStep: string | null;
@@ -109,41 +112,6 @@ const COST_BLURB: Record<JobType, string> = {
   "promo-video": "The slideshow costs about a cent of AI time.",
 };
 
-/** Tiny markdown renderer for the report: headings, bold, lists, links, paragraphs. Escapes HTML first. */
-function renderReport(md: string): { __html: string } {
-  const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const inline = (s: string) =>
-    esc(s)
-      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-  const lines = md.split("\n");
-  let html = "";
-  let inList = false;
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (line.startsWith("### ")) {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<h3 style="font-size:17px;margin:18px 0 6px">${inline(line.slice(4))}</h3>`;
-    } else if (line.startsWith("## ")) {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<h2 style="font-size:20px;margin:22px 0 8px">${inline(line.slice(3))}</h2>`;
-    } else if (line.startsWith("# ")) {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<h2 style="font-size:22px;margin:22px 0 8px">${inline(line.slice(2))}</h2>`;
-    } else if (line.startsWith("- ")) {
-      if (!inList) { html += "<ul style=\"margin:6px 0 6px 18px;line-height:1.6\">"; inList = true; }
-      html += `<li>${inline(line.slice(2))}</li>`;
-    } else if (line === "") {
-      if (inList) { html += "</ul>"; inList = false; }
-    } else {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<p style="margin:8px 0;line-height:1.65">${inline(line)}</p>`;
-    }
-  }
-  if (inList) html += "</ul>";
-  return { __html: html };
-}
 
 /**
  * A delivered website or flyer, shown in a locked-down frame: the page
@@ -269,6 +237,7 @@ function JobWorkspace() {
         // A failed step must say so in plain words — never surface a
         // JSON parse error when the server answers with an empty body.
         const d = await res.json().catch(() => ({} as { error?: string }));
+        if(res.status===202){await new Promise(resolve=>setTimeout(resolve,2000));continue;}
         if (!res.ok) throw new Error(d.error ?? "The team could not finish this step");
         await reload();
         if (d.done) break;
@@ -514,9 +483,8 @@ function JobWorkspace() {
                 <p style={{ color: "var(--ink-2)", lineHeight: 1.6 }}>
                   The team could not finish this job: {data.report.reason}
                 </p>
-                <button onClick={() => startWork()} disabled={running} className="btn leaf lg" style={{ marginTop: 16 }}>
-                  {running ? "The team is working…" : "Try again →"}
-                </button>
+                {data.job.escrowState === "funded" && <><p style={{marginTop:12}}>Your payment is still in escrow. You can retry within this job’s remaining budget or request your refund.</p><div style={{display:"flex",gap:12,flexWrap:"wrap",marginTop:16}}><button onClick={() => startWork()} disabled={running || deciding} className="btn leaf" type="button">{running ? "The team is working…" : "Try again"}</button><button onClick={()=>decide("reject")} disabled={deciding || running} className="btn" type="button">Request refund</button></div></>}
+                {decisionMsg && <p role="status" style={{marginTop:12}}>{decisionMsg}</p>}
                 {runError && <p className="error" style={{ marginTop: 12 }}>{runError}</p>}
               </div>
             )}
@@ -576,6 +544,7 @@ function JobWorkspace() {
                       </p>
                       <div style={{ marginTop: 14 }}>
                         <PagePreview jobId={data.job.id} jobType={data.job.jobType} html={data.report.html} />
+                        {data.report.designSvg && <MediaExports svg={data.report.designSvg} />}
                       </div>
                     </>
                   )}
@@ -585,10 +554,11 @@ function JobWorkspace() {
                       <p style={{ marginTop: 8, color: "var(--ink-2)", lineHeight: 1.6 }}>
                         Producer put this together from your brief. It is a
                         motion slideshow — moving slides with your
-                        business&rsquo;s words — not a video file.
+                        business&rsquo;s words. Use the video download below to export a silent video file.
                       </p>
                       <div style={{ marginTop: 14 }}>
                         <Slideshow slides={data.report.slides} />
+                        <MediaExports slides={data.report.slides} />
                       </div>
                       <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
                         <button

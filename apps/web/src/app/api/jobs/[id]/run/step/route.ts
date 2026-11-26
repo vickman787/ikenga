@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { reservedStageCalls, StageBudgetError } from "@/lib/stageCalls";
 import { requireJobAccess } from "@/lib/jobAccess";
 import { NextResponse } from "next/server";
 import { runCreativeStage, runReportStage, type CreativeJobType } from "@ikenga/agent";
@@ -51,16 +53,38 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ job: hire, report: before, nextStage: 0, done: true });
   }
 
-  const stepsBefore = before.steps.length;
-  const isReport = hire.jobType === "market-report";
-  const stored = isReport
-    ? progressToReport(await runReportStage(reportToProgress(before, hire.description), {}))
-    : progressToCreative(
-        await runCreativeStage(creativeToProgress(before, hire.description, hire.jobType as CreativeJobType), {}),
-      );
-  await setReport(id, stored);
-
+  if (hire.status !== "in-progress") return NextResponse.json({error:"This job is no longer running."},{status:409});
   const ledger = await getLedger();
+  const token=randomUUID();
+  const upgraded=before.generatorVersion===2;
+  const claimed=upgraded?await ledger.claimReportStage(id,before.stage,token):before;
+  if(!claimed)return NextResponse.json({busy:true,done:false,retryAfterMs:2000},{status:202,headers:{'retry-after':'2'}});
+  const stepsBefore = claimed.steps.length;
+  const isReport = hire.jobType === "market-report";
+  const deps=upgraded?reservedStageCalls(ledger,id,token):{};
+  let stored;
+  try {
+    stored=isReport
+      ? progressToReport(await runReportStage(reportToProgress(claimed,hire.description),deps))
+      : progressToCreative(await runCreativeStage(creativeToProgress(claimed,hire.description,hire.jobType as CreativeJobType),deps));
+  }catch(error){
+    if(upgraded&&error instanceof StageBudgetError){
+      const failed={...claimed,status:"refused" as const,stage:0,reason:error.message};
+      const saved=await ledger.completeReportStage(id,token,failed);
+      if(saved)return NextResponse.json({job:await getHire(id),report:saved,nextStage:0,done:true});
+    }
+    if(upgraded)await ledger.abandonReportStage(id,token);
+    return NextResponse.json({error:"This step was interrupted. Its spending allowance has been retained; you can retry within the remaining job budget."},{status:502});
+  }
+  if(upgraded){
+    const saved=await ledger.completeReportStage(id,token,stored);
+    if(!saved)return NextResponse.json({error:"The job changed while this step was running. No delivery was recorded."},{status:409});
+    stored=saved;
+  }else{
+    const current=await getHire(id);
+    if(current?.status!=="in-progress")return NextResponse.json({error:"This job is no longer running."},{status:409});
+    await setReport(id,stored);
+  }
   for (const step of stored.steps.slice(stepsBefore)) {
     await ledger.appendDecision({
       id: `dec_${id}_${step.agent}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -76,7 +100,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     });
   }
   if (stored.status === "delivered") {
-    await setHireStatus(id, "delivered");
+    if(!upgraded)await setHireStatus(id, "delivered");
     const deliveredDetail =
       isReport
         ? `${stored.steps.length} steps, ${stored.sources.length} sources`
@@ -91,8 +115,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       entry: `work|delivered|${stored.totalTokens}|${Math.round(stored.totalCostUsd * 1_000_000)}`,
     });
   } else if (stored.status === "refused") {
-    // Back to draft, so the customer can try again with a clearer brief.
-    await setHireStatus(id, "draft");
+    // A failed quality check does not erase an already funded escrow.
+    if(!upgraded)await setHireStatus(id, "draft");
   }
   const job = await getHire(id);
   return NextResponse.json({

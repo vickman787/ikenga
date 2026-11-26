@@ -20,6 +20,7 @@ export interface SearchResult {
 }
 
 export interface SourcePage {
+  retrievedAt?: string;
   title: string;
   url: string;
   /** Plain text pulled from the page, trimmed to a few thousand chars. */
@@ -204,7 +205,7 @@ export async function fetchPageText(url: string, deps: SearchDeps = {}): Promise
     const contentType = res.headers.get("content-type") ?? "";
     if (contentType && !/text\/html|text\/plain/.test(contentType)) return null;
     const html = await res.text();
-    const text = pageTextFromHtml(html);
+    const text = pageTextFromHtml(html, 20000);
     if (text.length < 80) return null;
     const finalUrl = res.url && res.url !== url ? res.url : url;
     return { title: finalUrl, url: finalUrl, text };

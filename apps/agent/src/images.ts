@@ -38,6 +38,7 @@ export const OPENAI_IMAGE_OUTPUT_USD_PER_MILLION = 32;
 export const OPENAI_IMAGE_INPUT_USD_PER_MILLION = 5;
 
 export interface ImageResult {
+  usageEstimated?: boolean;
   /** "data:image/jpeg;base64,..." — embedded in the deliverable. */
   dataUri: string;
   /** What this one picture cost, in USD. */
@@ -70,6 +71,7 @@ export async function generateImageOpenAI(input: GenerateImageInput, apiKey?: st
   const fetchFn = input.fetchFn ?? fetch;
   const res = await fetchFn(`${OPENAI_BASE_URL}/images/generations`, {
     method: "POST",
+    signal: AbortSignal.timeout(45_000),
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model: OPENAI_IMAGE_MODEL,
@@ -93,6 +95,7 @@ export async function generateImageOpenAI(input: GenerateImageInput, apiKey?: st
     throw new Error("OpenAI images: the reply carried no picture");
   }
   return {
+    usageEstimated: !data.usage || !Number.isInteger(data.usage.input_tokens) || !Number.isInteger(data.usage.output_tokens),
     dataUri: `data:image/jpeg;base64,${b64}`,
     costUsd: imageCostUsd(data.usage),
     model: OPENAI_IMAGE_MODEL,

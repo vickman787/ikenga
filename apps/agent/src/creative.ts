@@ -1,3 +1,6 @@
+const FACTS_SCHEMA={type:'object',additionalProperties:false,properties:{businessName:{type:'string'},whatItDoes:{type:'string'},services:{type:'array',items:{type:'string'}},prices:{type:'array',items:{type:'object',additionalProperties:false,properties:{item:{type:'string'},price:{type:'string'},listed:{type:'boolean'}},required:['item','price','listed']}},contact:{type:'string'},colours:{type:'string'},notes:{type:'string'}},required:['businessName','whatItDoes','services','prices','contact','colours','notes']};
+import { FLYER_DESIGN_SCHEMA, parseFlyerDesign, renderFlyerSvg, flyerHtml } from "@ikenga/shared";
+import { QUALITY_SCHEMA, QUALITY_INSTRUCTIONS, qualityPassed, qualitySummary, unconfirmedPrices } from "./quality.js";
 /**
  * The creative jobs — the website, the flyers, and the promo video.
  *
@@ -71,7 +74,7 @@
 import {
   OPENAI_MODEL_AUDIT,
   OPENAI_MODEL_WORK,
-  approxTokens,
+  promptTokenUpperBound,
   chatOpenAI,
   worstCaseCostUsd,
   type OpenAIReply,
@@ -121,6 +124,8 @@ export const CREATIVE_STAGE_LABELS: Record<CreativeJobType, Record<number, strin
 };
 
 export function creativeStageLabel(stage: number, jobType: CreativeJobType): string {
+  if(stage===6)return "Creating the picture for your work";
+  if(stage===7)return "Correcting the issues found in review";
   return CREATIVE_STAGE_LABELS[jobType]?.[stage] ?? "";
 }
 
@@ -188,6 +193,9 @@ export interface CreativeResult {
  * the next stage to run; 0 means the work is delivered or refused.
  */
 export interface CreativeProgress {
+  generatorVersion?: 1 | 2;
+  auditText?: string;
+  designSvg?: string;
   stage: number;
   jobType: CreativeJobType;
   brief: string;
@@ -231,8 +239,12 @@ export function emptyCreativeProgress(brief: string, jobType: CreativeJobType, r
 export function creativeRevisionProgress(previous: CreativeProgress, revisionNote: string): CreativeProgress {
   return {
     ...emptyCreativeProgress(previous.brief, previous.jobType, revisionNote),
-    stage: CREATIVE_STAGE_BUILD,
-    facts: previous.facts,
+    generatorVersion: previous.generatorVersion,
+    totalCostUsd: previous.generatorVersion === 2 ? previous.totalCostUsd : 0,
+    totalTokens: previous.generatorVersion === 2 ? previous.totalTokens : 0,
+    steps: previous.generatorVersion === 2 ? [...previous.steps] : [],
+    stage: previous.generatorVersion === 2 ? CREATIVE_STAGE_FACTS : CREATIVE_STAGE_BUILD,
+    facts: previous.generatorVersion === 2 ? null : previous.facts,
     // The old work stays on the page until the new one is built.
     html: previous.html,
     slides: previous.slides,
@@ -257,7 +269,7 @@ export function creativeProgressToResult(p: CreativeProgress): CreativeResult {
 }
 
 export interface RunCreativeDeps {
-  chat?: (input: { model: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; maxTokens?: number; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }) => Promise<OpenAIReply>;
+  chat?: (input: { responseSchema?: { name: string; schema: Record<string, unknown> }; model: string; messages: { role: "system" | "user" | "assistant"; content: string }[]; maxTokens?: number; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }) => Promise<OpenAIReply>;
   /** One picture for the job (see images.ts). When absent, the live
    * OpenAI Images API is used — but only when OPENAI_API_KEY is set.
    * When it returns null or throws, the job still delivers without a
@@ -467,6 +479,10 @@ function parseSlides(text: string): CreativeSlide[] | null {
  * makes the page look finished — but it cannot run code. The page is
  * still shown in a sandboxed frame with scripts switched off.
  */
+export function responsiveDocument(html: string): string {
+  return html.replace(/<head[^>]*>/i, head => head + '<meta name="viewport" content="width=device-width, initial-scale=1">');
+}
+
 export function sanitizeHtml(html: string): string {
   let out = html;
   out = out.replace(/<script[\s\S]*?<\/script\s*>/gi, "");
@@ -494,8 +510,8 @@ export function sanitizeHtml(html: string): string {
   return out.trim();
 }
 
-function buildPrompt(jobType: CreativeJobType, facts: CreativeFacts, revisionNote?: string): string {
-  const palette =
+function buildPrompt(jobType: CreativeJobType, facts: CreativeFacts, revisionNote?: string, upgraded = false): string {
+  const palette = upgraded ? "Use the customer’s colours when specified. Otherwise choose a restrained palette suited to this business and audience; do not copy the Ikenga app branding into every customer design. Set a consistent type scale, readable contrast and clear spacing." :
     "Use the Ikenga colours unless the brief asked for others: cream #FBF9F4 background, deep green #13271C for headings, leaf green #A3E36A for buttons and highlights, brass #C8902F for small accents.";
   const rules = `Rules: every word on the page must come from the facts below or the brief — do not invent a service, a price, a phone number, an address or a claim. List only what is in the facts — never add an extra row, offer, section, slide or item that is not in the facts (no "Special Offers", no "Combo deal", no extras of any kind). If a price was not in the brief, write "price not listed" — never guess a price. Write in plain, warm, human words — no jargon. No JavaScript, no forms. Pictures are made for you and put in the page — never link a picture from anywhere else, and never write an <img> tag yourself. Style it fully with inline <style> so it looks finished on its own.`;
   const briefFacts = factsText(facts);
@@ -533,14 +549,9 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
   }
   if (p.status !== "in-progress" || p.stage === 0) return p;
 
+  const upgraded = p.generatorVersion === 2;
   const rawChat = deps.chat ?? (async (c) => chatOpenAI(c));
-  /** One chat call; if the model answers with nothing (its thinking ate
-   * the token budget), try once more with twice the budget. */
-  const chat = async (c: Parameters<NonNullable<RunCreativeDeps["chat"]>>[0]): Promise<OpenAIReply> => {
-    const first = await rawChat(c);
-    if (first.text.trim().length > 0) return first;
-    return rawChat({ ...c, maxTokens: (c.maxTokens ?? 1024) * 2 });
-  };
+  const chat = rawChat;
 
   const charge = (reply: OpenAIReply, agent: CreativeStep["agent"], what: string) => {
     p.totalTokens += reply.usage.totalTokens;
@@ -550,7 +561,7 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
 
   /** Refuse instead of overspending: check the worst case before each call. */
   const withinBudget = (model: string, prompt: string, maxTokens: number): boolean =>
-    p.totalCostUsd + worstCaseCostUsd(model, approxTokens(prompt), maxTokens) <= CREATIVE_MODEL_BUDGET_USD;
+    p.totalCostUsd + worstCaseCostUsd(model, promptTokenUpperBound(prompt), maxTokens) <= CREATIVE_MODEL_BUDGET_USD;
 
   /** Already spent too much (a call cost more than its worst case) — stop now. */
   const overBudget = (): boolean => p.totalCostUsd > CREATIVE_MODEL_BUDGET_USD;
@@ -576,17 +587,19 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
         what: `Read the brief again — ${p.facts.businessName ? `"${p.facts.businessName}"` : "the business"}: ${p.facts.whatItDoes || "what it does, its services and its contact"}.`,
         detail: factsText(p.facts).slice(0, 400),
       });
-      return { ...p, stage: CREATIVE_STAGE_BUILD };
+      return { ...p, stage: upgraded ? 6 : CREATIVE_STAGE_BUILD };
     }
-    const factsPrompt = `You are ${builder}, reading a customer's brief for a ${noun} for a small business in Nigeria.\n\nThe brief:\n${brief}\n\nReply with JSON ONLY, in this shape: {"businessName": "...", "whatItDoes": "...", "services": ["..."], "prices": [{"item": "...", "price": "...", "listed": true}], "contact": "...", "colours": "...", "notes": "..."}.\n\nRules: only use facts from the brief. If the brief does not name the business, leave businessName empty. If a price is not in the brief, do not list it as a price — either leave it out of prices or list it with listed: false and price: "price not listed". Never invent a business name, a price, a phone number, an address or a service. If the brief has no usable facts at all, reply with {"businessName": "", "whatItDoes": "", "services": [], "prices": [], "contact": "", "colours": "", "notes": "no usable facts in the brief"}.`;
-    if (!withinBudget(OPENAI_MODEL_WORK, factsPrompt, 800)) {
+    const factsPrompt = `You are ${builder}, reading a customer's brief for a ${noun} for a small business in Nigeria.\n\nThe brief:\n${brief}\n${p.revisionNote ? "Customer corrections (override earlier facts): " + p.revisionNote : ""}\n\nReply with JSON ONLY, in this shape: {"businessName": "...", "whatItDoes": "...", "services": ["..."], "prices": [{"item": "...", "price": "...", "listed": true}], "contact": "...", "colours": "...", "notes": "..."}.\n\nRules: only use facts from the brief. If the brief does not name the business, leave businessName empty. If a price is not in the brief, do not list it as a price — either leave it out of prices or list it with listed: false and price: "price not listed". Never invent a business name, a price, a phone number, an address or a service. If the brief has no usable facts at all, reply with {"businessName": "", "whatItDoes": "", "services": [], "prices": [], "contact": "", "colours": "", "notes": "no usable facts in the brief"}.`;
+    if (!withinBudget(OPENAI_MODEL_WORK, factsPrompt, 1200)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const read = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: factsPrompt }], maxTokens: 1200, reasoningEffort: "low" });
+    const read = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: factsPrompt }], ...(upgraded?{responseSchema:{name:"creative_facts",schema:FACTS_SCHEMA}}:{}), maxTokens: 1200, reasoningEffort: "low" });
     charge(read, builder, `Read the brief.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
     let facts = parseFacts(read.text);
     if (!facts) {
+      if(upgraded)return refuse("The confirmed business facts could not be read clearly. Please check the brief.");
+      if (!withinBudget(OPENAI_MODEL_WORK, factsPrompt + " Reply with JSON only.", 1200)) return refuse("Reading the brief again would exceed the job budget.");
       // One retry: the model may have answered in words instead of JSON.
       const retry = await chat({
         model: OPENAI_MODEL_WORK,
@@ -608,7 +621,7 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     if (facts.businessName === "" && facts.whatItDoes === "" && facts.services.length === 0) {
       return refuse("The brief did not say what the business is or what it does — try again with the business name, what it does, and how to reach it.");
     }
-    return { ...p, stage: CREATIVE_STAGE_BUILD };
+    return { ...p, stage: upgraded ? 6 : CREATIVE_STAGE_BUILD };
   }
 
   if (!p.facts) {
@@ -626,12 +639,12 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
       const slides = p.slides.map((s) => ({ title: s.title, text: s.text, ...(s.image ? { image: "[picture]" } : {}) }));
       return JSON.stringify({ slides }, null, 2);
     }
-    return p.html.replace(/<img\b[^>]*>/gi, "<img [picture]>");
+    return p.html.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g,"[picture]").replace(/<img\b[^>]*>/gi, "<img [picture]>");
   };
   /** The picture, once made, belongs in the finished work — on the
    * first slide for a slideshow, after the headline for a page. */
   const attachImage = (): void => {
-    if (!p.image) return;
+    if (!p.image || upgraded && jobType === "flyers") return;
     if (jobType === "promo-video") {
       if (p.slides.length > 0) {
         p.slides = [{ ...p.slides[0], image: p.image }, ...p.slides.slice(1)];
@@ -642,9 +655,43 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     p.html = insertHeroImage(p.html, p.image, alt);
   };
 
+  if(upgraded && p.stage===6){
+    const prompt=buildPrompt(jobType,facts,p.revisionNote,true);
+    const maxTokens=jobType==='promo-video'?1200:4000;
+    if (!p.image) {
+      const imageFn =
+        deps.image ??
+        (process.env.OPENAI_API_KEY ? async (input: { prompt: string }) => generateImageOpenAI(input) : undefined);
+      if (imageFn) {
+        if (p.totalCostUsd + OPENAI_IMAGE_PRICE_USD + worstCaseCostUsd(OPENAI_MODEL_WORK, promptTokenUpperBound(prompt), maxTokens) > CREATIVE_MODEL_BUDGET_USD) {
+          p.steps.push({ agent: builder, what: "No picture this time — it would not fit in the $0.50 set aside for this job.", detail: "The work is delivered without a picture; nothing else changed." });
+        } else {
+          try {
+            const made = await imageFn({ prompt: buildImagePrompt(facts, jobType) });
+            if (made && made.dataUri) {
+              p.image = made.dataUri;
+              p.totalCostUsd = Math.round((p.totalCostUsd + made.costUsd) * 1_000_000) / 1_000_000;
+              p.steps.push({ agent: builder, what: "Made one picture for the work.", detail: `A picture of ${facts.businessName || "the business"} — ${made.model}, about ${made.costUsd.toFixed(3)}.`, model: made.model, costUsd: made.costUsd });
+            } else {
+              p.steps.push({ agent: builder, what: "No picture this time — the picture did not come back.", detail: "The work is delivered without a picture; nothing else changed." });
+            }
+          } catch {
+            p.steps.push({ agent: builder, what: "No picture this time — the picture service did not answer.", detail: "The work is delivered without a picture; nothing else changed." });
+          }
+        }
+      }
+    }
+
+    return {...p,stage:CREATIVE_STAGE_BUILD};
+  }
   // --- Stage 2: build the work from the facts. ---
   if (p.stage === CREATIVE_STAGE_BUILD) {
-    const prompt = buildPrompt(jobType, facts, p.revisionNote);
+    let prompt = buildPrompt(jobType, facts, p.revisionNote, upgraded) + (upgraded ? "\nDesign direction: respect the customer brand and audience. Use a deliberate visual hierarchy, generous spacing, readable contrast, and a strong contact ending. Avoid an identical generic design for every business. Use responsive CSS with no horizontal overflow at 360px. For flyers, include print-safe spacing and a fluid on-screen preview. For a slideshow, create a concise hook and coherent story; do not call it a rendered video. Creative wording is allowed; invented factual claims such as best or famous are not. Full original brief:\n" + brief : "");
+    if(upgraded) prompt = prompt.replaceAll("every word on the page must come from the facts below or the brief", "all factual statements must be supported by the confirmed facts or brief").replaceAll("Every word must come from the facts or the brief", "Every factual statement must be supported by the facts or brief").replace("One column, max-width about 720px", "A thoughtful responsive layout: a spacious hero and service grid on desktop, a single-column flow on phones, max-width about 1100px");
+    if(upgraded && jobType === "flyers")prompt=flyerPrompt(facts,brief,p.revisionNote);
+    if (upgraded && jobType === "website") prompt += "\nProfessional delivery standard: create a complete mobile-first business landing page, with a compact brand navigation, a distinctive two-column hero on desktop, a concise outcome-led headline, a prominent working contact link when confirmed, a balanced service grid, clear pricing and a designed contact footer. Use CSS grid, a considered type pairing using system fonts, a fluid clamp() type scale, varied section backgrounds and a consistent spacing scale. Use .hero img with object-fit:cover and an intentional aspect ratio; design gracefully when no picture is available. No fake reviews, counters, awards, discounts, stock image links, empty sections or placeholder copy. Use semantic headings, accessible contrast, visible focus states and a responsive single-column layout below 640px. This is a finished client website, not a document with headings.";
+    if (upgraded && jobType === "promo-video") prompt += "\nProfessional delivery standard: write a coherent five-scene promotional story: attention-grabbing hook, customer need grounded in the brief, actual service or product offer, concrete confirmed detail or price, then a direct contact ending. Use varied, concise headlines (maximum 55 characters) and one short supporting sentence (maximum 150 characters). Avoid repeating the business name on every scene, filler slogans, invented benefits or unconfirmed promises. The renderer supplies motion, composition and scene pacing; do not write camera instructions inside customer-facing text.";
+
     const maxTokens = jobType === "promo-video" ? 1200 : 4000;
     // --- The picture: one per job, made once at the design stage.
     // A revision reuses the picture already made (p.image is set).
@@ -654,12 +701,12 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     // the service at all (no key, no injected stand-in), it is
     // skipped quietly: the live run gate already stops a job without
     // a key, so this only happens in tests and local runs.
-    if (!p.image) {
+    if (!p.image && !upgraded) {
       const imageFn =
         deps.image ??
         (process.env.OPENAI_API_KEY ? async (input: { prompt: string }) => generateImageOpenAI(input) : undefined);
       if (imageFn) {
-        if (p.totalCostUsd + OPENAI_IMAGE_PRICE_USD + worstCaseCostUsd(OPENAI_MODEL_WORK, approxTokens(prompt), maxTokens) > CREATIVE_MODEL_BUDGET_USD) {
+        if (p.totalCostUsd + OPENAI_IMAGE_PRICE_USD + worstCaseCostUsd(OPENAI_MODEL_WORK, promptTokenUpperBound(prompt), maxTokens) > CREATIVE_MODEL_BUDGET_USD) {
           p.steps.push({ agent: builder, what: "No picture this time — it would not fit in the $0.50 set aside for this job.", detail: "The work is delivered without a picture; nothing else changed." });
         } else {
           try {
@@ -680,10 +727,16 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     if (!withinBudget(OPENAI_MODEL_WORK, prompt, maxTokens)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const built = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: prompt }], maxTokens });
+    const flyer = upgraded && jobType === "flyers";
+    const built = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: prompt }], ...(flyer ? {responseSchema:{name:"flyer_design",schema:FLYER_DESIGN_SCHEMA}} : {}), maxTokens });
     charge(built, builder, jobType === "promo-video" ? "Put the slideshow together from the brief." : `Built the ${noun} from the brief.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
-    if (jobType === "promo-video") {
+    if(flyer){
+      const design=parseFlyerDesign(built.text);
+      if(!design)return refuse("The flyer design was incomplete.");
+      try {p.designSvg=renderFlyerSvg(facts,design,p.image);p.html=flyerHtml(p.designSvg);}catch(error){return refuse(error instanceof Error?error.message:"The flyer text could not fit.");}
+      p.slides=[];p.steps[p.steps.length-1].detail="Created a self-contained print design with a checked text layout.";
+    } else if (jobType === "promo-video") {
       const slides = parseSlides(built.text);
       if (!slides) {
         return refuse("The slideshow did not come back in a readable shape — try the job again.");
@@ -700,7 +753,7 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
       if (html.length < 120 || !/<(h1|h2)[\s>]/.test(html)) {
         return refuse(`The ${noun} did not come back as a finished page — try the job again.`);
       }
-      p.html = html;
+      p.html = upgraded ? responsiveDocument(html) : html;
       p.slides = [];
       p.steps[p.steps.length - 1].detail = `About ${html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length} words, built from your brief.`;
     }
@@ -710,52 +763,41 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
 
   // --- Stage 3, Analyst: check every word, price and number against the facts. ---
   if (p.stage === CREATIVE_STAGE_CHECK) {
-    const checkPrompt = `You are Analyst, checking a ${noun} against the brief it was built from.\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts from the brief (the only facts allowed):\n${factsText(facts)}\n\nList every business name, service, price, phone number and address in the ${noun}, and for each one say whether it is in the facts or not. End with one line: either "ALL FACTS CHECK OUT" or "PROBLEMS:" followed by the list of words that could not be checked. Do not add new facts. A price shown as "price not listed" is fine.`;
-    if (!withinBudget(OPENAI_MODEL_WORK, checkPrompt, 800)) {
+    let checkPrompt = `You are Analyst, checking a ${noun} against the brief it was built from.\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts from the brief (the only facts allowed):\n${factsText(facts)}\n\nList every business name, service, price, phone number and address in the ${noun}, and for each one say whether it is in the facts or not. End with one line: either "ALL FACTS CHECK OUT" or "PROBLEMS:" followed by the list of words that could not be checked. Do not add new facts. A price shown as "price not listed" is fine.`;
+    if (upgraded) checkPrompt += "\n" + QUALITY_INSTRUCTIONS + "\nOriginal brief: " + brief + "\nCustomer corrections: " + (p.revisionNote ?? "none");
+    if (!withinBudget(OPENAI_MODEL_WORK, checkPrompt, 2000)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const check = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], maxTokens: 2000, reasoningEffort: "low" });
+    const check = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: checkPrompt }], ...(upgraded ? { responseSchema: { name: "quality", schema: QUALITY_SCHEMA } } : {}), maxTokens: 2000, reasoningEffort: "low" });
     charge(check, "Analyst", `Checked every word, price and phone number against the brief.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
     p.checkText = stripCodeFences(check.text);
-    p.steps[p.steps.length - 1].detail = p.checkText.slice(-300);
-    return { ...p, stage: CREATIVE_STAGE_AUDIT };
+    p.steps[p.steps.length - 1].detail = upgraded ? qualitySummary(p.checkText) : p.checkText.slice(-300);
+    return { ...p, stage: upgraded && p.revisions > 0 ? CREATIVE_STAGE_REAUDIT : CREATIVE_STAGE_AUDIT };
   }
 
-  // --- Stages 4 and 5, Auditor: a different model reads it and says pass or fix. ---
-  if (p.stage === CREATIVE_STAGE_AUDIT || p.stage === CREATIVE_STAGE_REAUDIT) {
-    const isReaudit = p.stage === CREATIVE_STAGE_REAUDIT;
-    const prompt = auditPrompt(jobType, facts, deliverableText(), p.checkText);
-    if (!withinBudget(OPENAI_MODEL_AUDIT, prompt, 600)) {
-      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
-    }
-    const audit = await chat({ model: OPENAI_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], maxTokens: 1500, reasoningEffort: "low" });
-    charge(audit, "Auditor", isReaudit ? `Read the revised ${noun} again.` : `Read the ${noun} on a different model, before it reaches you.`);
-    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
-    const auditText = stripCodeFences(audit.text);
-    p.steps[p.steps.length - 1].detail = auditText.slice(0, 400);
-    const verdict = auditText.replace(/^[^A-Za-z]+/, "");
-    if (/^PASS\b/i.test(verdict)) {
-      return deliver();
-    }
-    if (isReaudit) {
-      // One revision was already used. Ship it, but say so plainly.
-      p.steps.push({ agent: "Auditor", what: `Still had notes after one revision — the ${noun} is shown with them.`, detail: auditText.slice(0, 400) });
-      return deliver();
-    }
-    // One free revision: rebuild it, fixing what the Auditor flagged.
-    const fixPrompt =
+  function flyerPrompt(facts:CreativeFacts,original:string,note?:string):string {
+    return 'You are Designer, making a refined flyer. Return JSON only: {"headline":"short offer headline","subheading":"one useful line about the business","details":"opening hours and location if supplied","accent":"#RRGGBB","background":"#RRGGBB"}. Business name, services, prices and contact are placed exactly from confirmed facts by the renderer. Do not repeat the price list in the headline or subheading. Use the customer’s colours; choose a dark accent readable behind white text and a light background. No invented claims or missing requested facts. Facts: '+factsText(facts)+'\nOriginal brief: '+original+'\nCorrections: '+(note??'none');
+  }
+  async function revise(auditText:string):Promise<CreativeProgress>{
+    const priceIssues=upgraded?unconfirmedPrices(deliverableText(),brief+'\n'+(p.revisionNote??'')):[];
+    let fixPrompt =
       jobType === "promo-video"
-        ? `You are Producer. The Auditor read your slideshow and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe slideshow:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn JSON ONLY, same shape as before: {"slides": [{"title": "...", "text": "..."}]}. Do not invent any fact.`
-        : `You are ${builder}. The Auditor read your ${noun} and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn the full corrected ${noun} as HTML, same shape as before. Do not invent any fact. No JavaScript, no external pictures, no forms.`;
+        ? `You are Producer. The Auditor read your slideshow and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\nAnalyst checks: ${p.checkText}\nDeterministic checks: ${priceIssues.join("; ")}\n\nThe slideshow:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn JSON ONLY, same shape as before: {"slides": [{"title": "...", "text": "..."}]}. Do not invent any fact.`
+        : `You are ${builder}. The Auditor read your ${noun} and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\nAnalyst checks: ${p.checkText}\nDeterministic checks: ${priceIssues.join("; ")}\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn the full corrected ${noun} as HTML, same shape as before. Do not invent any fact. No JavaScript, no external pictures, no forms.`;
+    const flyer=upgraded && jobType==="flyers";
+    if(flyer)fixPrompt=flyerPrompt(facts,brief,p.revisionNote)+"\nQuality corrections: "+auditText+"\nAnalyst: "+p.checkText;
     const fixMaxTokens = jobType === "promo-video" ? 1200 : 4000;
     if (!withinBudget(OPENAI_MODEL_WORK, fixPrompt, fixMaxTokens)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const fixed = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: fixMaxTokens });
+    const fixed = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], ...(flyer?{responseSchema:{name:"flyer_design",schema:FLYER_DESIGN_SCHEMA}}:{}), maxTokens: fixMaxTokens });
     charge(fixed, builder, `Revised the ${noun} once, fixing what the Auditor flagged.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
-    if (jobType === "promo-video") {
+    if(flyer){
+      const design=parseFlyerDesign(fixed.text);if(!design)return refuse("The revised flyer was incomplete.");
+      try{p.designSvg=renderFlyerSvg(facts,design,p.image);p.html=flyerHtml(p.designSvg);}catch(error){return refuse(error instanceof Error?error.message:"The flyer text could not fit.");}
+    } else if (jobType === "promo-video") {
       const slides = parseSlides(fixed.text);
       if (!slides) return refuse("The revised slideshow did not come back in a readable shape — try the job again.");
       p.slides = slides;
@@ -770,7 +812,35 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     // The revised work gets the same picture back — it was made once.
     attachImage();
     p.revisions += 1;
-    return { ...p, stage: CREATIVE_STAGE_REAUDIT };
+    return { ...p, stage: upgraded ? CREATIVE_STAGE_CHECK : CREATIVE_STAGE_REAUDIT };
+  }
+  if(upgraded && p.stage===7)return revise(p.auditText??'The previous quality check was incomplete.');
+
+  // --- Stages 4 and 5, Auditor: a different model reads it and says pass or fix. ---
+  if (p.stage === CREATIVE_STAGE_AUDIT || p.stage === CREATIVE_STAGE_REAUDIT) {
+    const isReaudit = p.stage === CREATIVE_STAGE_REAUDIT;
+    const prompt = auditPrompt(jobType, facts, deliverableText(), p.checkText) + (upgraded ? "\nOverride the one-line verdict instruction above. " + QUALITY_INSTRUCTIONS + "\nOriginal brief: " + brief + "\nCustomer corrections: " + (p.revisionNote ?? "none") : "");
+    if (!withinBudget(OPENAI_MODEL_AUDIT, prompt, 1500)) {
+      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
+    }
+    const audit = await chat({ model: OPENAI_MODEL_AUDIT, messages: [{ role: "user", content: prompt }], ...(upgraded ? { responseSchema: { name: "quality", schema: QUALITY_SCHEMA } } : {}), maxTokens: 1500, reasoningEffort: "low" });
+    charge(audit, "Auditor", isReaudit ? `Read the revised ${noun} again.` : `Read the ${noun} on a different model, before it reaches you.`);
+    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
+    const auditText = stripCodeFences(audit.text);
+    p.steps[p.steps.length - 1].detail = upgraded ? qualitySummary(auditText) : auditText.slice(0, 400);
+    const verdict = auditText.replace(/^[^A-Za-z]+/, "");
+    const priceIssues = upgraded ? unconfirmedPrices(deliverableText(), brief + "\n" + (p.revisionNote ?? "")) : [];
+    if (upgraded ? qualityPassed(auditText) && qualityPassed(p.checkText) && priceIssues.length === 0 : /^PASS\b/i.test(verdict)) {
+      return deliver();
+    }
+    if (isReaudit && upgraded) return refuse("The work did not pass its factual and completeness checks after revision. " + [...priceIssues, qualitySummary(auditText), qualitySummary(p.checkText)].join(" ").slice(0, 600));
+    if (isReaudit) {
+      // One revision was already used. Ship it, but say so plainly.
+      p.steps.push({ agent: "Auditor", what: `Still had notes after one revision — the ${noun} is shown with them.`, detail: auditText.slice(0, 400) });
+      return deliver();
+    }
+    // One free revision: rebuild it, fixing what the Auditor flagged.
+    return upgraded ? {...p,stage:7,auditText} : revise(auditText);
   }
 
   return p;

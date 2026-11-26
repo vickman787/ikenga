@@ -44,6 +44,7 @@ export interface OpenAIUsage {
 }
 
 export interface OpenAIReply {
+  usageEstimated?: boolean;
   model: string;
   text: string;
   usage: OpenAIUsage;
@@ -53,7 +54,7 @@ export interface OpenAIReply {
 
 export function estimateCostUsd(model: string, usage: OpenAIUsage): number {
   const price = OPENAI_PRICES_USD_PER_MILLION[model];
-  if (!price) return 0;
+  if (!price) throw new Error("No configured price for model: " + model);
   const cost = (usage.promptTokens * price.input + usage.completionTokens * price.output) / 1_000_000;
   return Math.round(cost * 1_000_000) / 1_000_000;
 }
@@ -64,6 +65,9 @@ export function worstCaseCostUsd(model: string, promptTokens: number, maxTokens:
 }
 
 /** Rough token estimate for a prompt (about 4 characters per token). */
+/** Conservative byte-level reservation, including chat framing overhead. */
+export function promptTokenUpperBound(text: string): number { return new TextEncoder().encode(text).length + 256; }
+
 export function approxTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -79,6 +83,7 @@ export function resolveOpenAIKey(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export interface ChatInput {
+  responseSchema?: { name: string; schema: Record<string, unknown> };
   model: string;
   messages: { role: "system" | "user" | "assistant"; content: string }[];
   maxTokens?: number;
@@ -99,11 +104,15 @@ export async function chatOpenAI(input: ChatInput, apiKey?: string): Promise<Ope
   const key = apiKey ?? resolveOpenAIKey();
   const fetchFn = input.fetchFn ?? fetch;
   // reasoningEffort is deliberately NOT sent (see ChatInput above).
+  // Validate pricing before sending a paid request.
+  estimateCostUsd(input.model, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
   const res = await fetchFn(`${OPENAI_BASE_URL}/chat/completions`, {
     method: "POST",
+    signal: AbortSignal.timeout(45_000),
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model: input.model,
+      ...(input.responseSchema ? { response_format: { type: "json_schema", json_schema: { ...input.responseSchema, strict: true } } } : {}),
       messages: input.messages,
       max_tokens: input.maxTokens ?? 1024,
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
@@ -114,14 +123,20 @@ export async function chatOpenAI(input: ChatInput, apiKey?: string): Promise<Ope
     throw new Error(`OpenAI ${res.status}: ${body.slice(0, 200) || res.statusText}`);
   }
   const data = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
+    choices?: { finish_reason?: string; message?: { content?: string } }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   };
-  const text = data.choices?.[0]?.message?.content ?? "";
-  const usage: OpenAIUsage = {
-    promptTokens: data.usage?.prompt_tokens ?? 0,
-    completionTokens: data.usage?.completion_tokens ?? 0,
-    totalTokens: data.usage?.total_tokens ?? 0,
+  const choice = data.choices?.[0];
+  // Still account for usage, but never accept a truncated or filtered artifact.
+  const text = choice?.finish_reason && choice.finish_reason !== "stop" ? "" : choice?.message?.content ?? "";
+  const measured = data.usage;
+  const valid = measured && Number.isInteger(measured.prompt_tokens) && measured.prompt_tokens! >= 0 && Number.isInteger(measured.completion_tokens) && measured.completion_tokens! >= 0;
+  // Missing usage must never make a paid call appear free.
+  const usage: OpenAIUsage = valid ? {
+    promptTokens: measured.prompt_tokens!, completionTokens: measured.completion_tokens!, totalTokens: measured.prompt_tokens! + measured.completion_tokens!,
+  } : {
+    promptTokens: promptTokenUpperBound(input.messages.map(m=>m.content).join("\n")), completionTokens: input.maxTokens ?? 1024,
+    totalTokens: promptTokenUpperBound(input.messages.map(m=>m.content).join("\n")) + (input.maxTokens ?? 1024),
   };
-  return { model: input.model, text, usage, costUsd: estimateCostUsd(input.model, usage) };
+  return { model: input.model, text, usage, usageEstimated: !valid, costUsd: estimateCostUsd(input.model, usage) };
 }

@@ -36,6 +36,7 @@ export {
   resolveOpenAIKey,
   estimateCostUsd,
   worstCaseCostUsd,
+  promptTokenUpperBound,
   OPENAI_BASE_URL,
   OPENAI_MODEL_WORK,
   OPENAI_MODEL_AUDIT,
@@ -84,3 +85,5 @@ export {
   type BillUpdate,
   type SiteBill,
 } from "./bills.js";
+
+export { GENERATOR_VERSION } from "./quality.js";
