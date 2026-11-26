@@ -95,7 +95,7 @@ export default function WorkspaceHome({ live, children }: { live: Live; children
         <a href="/activity"><Icon name="shield" />Activity & transparency</a>
         <a href="#office"><Icon name="team" />The office</a>
         <a href="#questions"><Icon name="book" />Questions</a>
-        <a href="https://github.com/vickman787/ikenga/tree/main/docs" target="_blank" rel="noreferrer"><Icon name="book" />Documentation</a>
+        <a href="/docs"><Icon name="book" />Documentation</a>
       </nav>
       <div className="ws-sidebar-bottom"><div className="ws-small-promise"><Icon name="shield" /><b>Your money has a waiting room.</b><p>Payments stay in escrow while the team does the work.</p><a href="#how" onClick={closeMenu}>How escrow works</a></div><div className="ws-chain"><span />Built on Celo<small>USDT · cNGN</small></div></div>
     </aside>
