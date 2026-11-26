@@ -131,3 +131,15 @@ it('builds and checks a new flyer through separate paid stages and exports the s
  expect(state.status).toBe('delivered');expect(state.designSvg).toContain('₦2500');expect(state.html).toContain(state.designSvg);expect(state.html).toContain(facts.contact);
 });
 
+
+it('runs the image stage between fact extraction and layout for a new version 2 job', async () => {
+ const start = {...emptyCreativeProgress('Ada sells Rice for ₦2500. Call 08031234567.','flyers'),generatorVersion:2 as const};
+ let chatCalls = 0, imageCalls = 0;
+ const chat = async () => { chatCalls++; return reply(JSON.stringify(facts)); };
+ const image = async () => { imageCalls++; return {dataUri:'data:image/jpeg;base64,/9j/2Q==',model:'fixture',costUsd:.019}; };
+ const read = await runCreativeStage(start,{chat,image});
+ expect(read.stage).toBe(6); expect(chatCalls).toBe(1); expect(imageCalls).toBe(0);
+ const pictured = await runCreativeStage(read,{chat,image});
+ expect(pictured.stage).toBe(2); expect(chatCalls).toBe(1); expect(imageCalls).toBe(1);
+ expect(pictured.image).toContain('data:image/jpeg'); expect(pictured.totalCostUsd).toBeCloseTo(.020);
+});

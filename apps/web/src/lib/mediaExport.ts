@@ -1,3 +1,4 @@
+import { promoScene } from "@ikenga/shared";
 /** Browser-only exports. Inputs remain on the customer's device. */
 export function downloadBlob(blob: Blob, filename: string) { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 export async function loadImage(source: string): Promise<HTMLImageElement> {
@@ -124,8 +125,9 @@ export async function exportPromoVideo(slides: VideoSlide[], format: {
         const index = Math.min(slides.length - 1, Math.floor(elapsed / sceneMs));
         const local = (elapsed - index * sceneMs) / sceneMs;
         const slide = slides[index];
-        const image = pictures[index];
-        ctx.fillStyle = '#13271C';
+        const image = pictures[index] ?? (index % 2 === 0 ? pictures[0] : null);
+        const theme = promoScene(index);
+        ctx.fillStyle = theme.background;
         ctx.fillRect(0, 0, 720, 1280);
         if (image) {
             const scale = Math.max(720 / image.width, 620 / image.height) * (1 + local * .06);
@@ -137,19 +139,28 @@ export async function exportPromoVideo(slides: VideoSlide[], format: {
             ctx.drawImage(image, (720 - width) / 2, (620 - height) / 2, width, height);
             ctx.restore();
             const gradient = ctx.createLinearGradient(0, 400, 0, 650);
-            gradient.addColorStop(0, '#13271c00');
-            gradient.addColorStop(1, '#13271c');
+            gradient.addColorStop(0, theme.background + '00');
+            gradient.addColorStop(1, theme.background);
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 400, 720, 250);
+        }
+        ctx.fillStyle = theme.accent;
+        ctx.fillRect(55, 65, 54, 5);
+        ctx.font = '700 20px Arial';
+        ctx.fillText(String(index + 1).padStart(2, '0') + ' / ' + String(slides.length).padStart(2, '0'), 55, 110);
+        if (!image) {
+            ctx.save(); ctx.globalAlpha = .12; ctx.font = '700 270px Arial';
+            ctx.fillText(String(index + 1).padStart(2, '0'), 390, 390); ctx.restore();
+            ctx.fillRect(55, 340, 100, 8);
         }
         ctx.save();
         ctx.globalAlpha = Math.min(1, local * 8);
         ctx.translate(0, Math.max(0, 1 - local * 8) * 18);
         const y = image ? 690 : 420;
-        const titleHeight = drawText(ctx, slide.title, y, 66, 3, '#FBF9F4');
-        drawText(ctx, slide.text, y + titleHeight + 36, 36, 5, '#FBF9F4');
+        const titleHeight = drawText(ctx, slide.title, y, 66, 3, theme.ink);
+        drawText(ctx, slide.text, y + titleHeight + 36, 36, 5, theme.ink);
         ctx.restore();
-        ctx.fillStyle = '#A3E36A';
+        ctx.fillStyle = theme.accent;
         ctx.fillRect(55, 1190, 610 * Math.min(1, elapsed / duration), 5);
     };
     draw(0);

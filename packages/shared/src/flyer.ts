@@ -94,9 +94,32 @@ export function renderFlyerSvg(facts: FlyerFacts, design: FlyerDesign, image?: s
     if (prices.length > 14)
         throw new Error('A single flyer supports up to 14 items. Split this price list into separate flyers.');
     const picture = image && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image) ? image : null;
-    const top = picture ? 688 : 450;
-    const rowHeight = Math.min(68, Math.floor((1140 - top) / Math.max(prices.length, 1)));
-    const rows = prices.map((p, i) => { const y = top + i * rowHeight; return `<line x1="64" x2="936" y1="${y + rowHeight - 14}" y2="${y + rowHeight - 14}" stroke="${accent}" stroke-opacity=".16"/>` + label(p.item, 64, y, 595, Math.min(30, rowHeight * .5), rowHeight < 52 ? 1 : 2, '#211C18', 500) + label(p.listed ? p.price : 'price not listed', 710, y, 225, Math.min(30, rowHeight * .5), 2, '#211C18', 700); }).join('');
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1414" viewBox="0 0 1000 1414" role="img" aria-label="${escape(facts.businessName)} flyer"><rect width="1000" height="1414" fill="${background}"/><rect x="0" y="0" width="20" height="1414" fill="${accent}"/><g font-family="Arial, sans-serif">${label(facts.businessName || design.headline, 64, 112, 870, 72, 2, accent, 700)}${label(design.subheading || facts.whatItDoes, 68, 270, 850, 26, 3, '#211C18')}${picture ? `<defs><clipPath id="photo"><rect x="64" y="360" width="872" height="240" rx="18"/></clipPath></defs><image href="${picture}" x="64" y="360" width="872" height="240" preserveAspectRatio="xMidYMid slice" clip-path="url(#photo)"/>` : ''}${label(design.headline, 64, picture ? 648 : 405, 870, 26, 1, accent, 700)}${rows}<rect x="44" y="1194" width="912" height="176" rx="20" fill="${accent}"/>${label(facts.contact, 70, 1244, 860, 32, 2, '#FFFFFF', 700)}${label(design.details, 70, 1330, 855, 20, 2, '#FFFFFF')}</g></svg>`;
+    // A compact editorial header leaves a consistent area for confirmed offers.
+    const top = 730;
+    const rowHeight = Math.min(92, Math.floor(440 / Math.max(prices.length, 1)));
+    const rows = prices.map((p, i) => {
+        const y = top + i * rowHeight;
+        return '<line x1="76" x2="924" y1="' + (y + rowHeight - 20) + '" y2="' + (y + rowHeight - 20) + '" stroke="' + accent + '" stroke-opacity=".15"/>'
+            + label(p.item, 76, y, 585, Math.min(32, rowHeight * .52), rowHeight < 56 ? 1 : 2, '#211C18', 500)
+            + label(p.listed ? p.price : 'price not listed', 710, y, 212, Math.min(32, rowHeight * .52), rowHeight < 56 ? 1 : 2, '#211C18', 700);
+    }).join('');
+    const heroWidth = picture ? 450 : 840;
+    const artwork = picture
+        ? '<defs><clipPath id="photo"><rect x="554" y="152" width="396" height="390" rx="180"/></clipPath></defs><image href="' + picture + '" x="554" y="152" width="396" height="390" preserveAspectRatio="xMidYMid slice" clip-path="url(#photo)"/><circle cx="752" cy="347" r="207" fill="none" stroke="#FFFFFF" stroke-opacity=".35"/>'
+        : '<circle cx="900" cy="500" r="215" fill="none" stroke="#FFFFFF" stroke-opacity=".12" stroke-width="55"/><circle cx="900" cy="500" r="115" fill="none" stroke="#FFFFFF" stroke-opacity=".12" stroke-width="2"/>';
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1414" viewBox="0 0 1000 1414" role="img" aria-label="' + escape(facts.businessName) + ' flyer"><rect width="1000" height="1414" fill="' + background + '"/><rect width="1000" height="602" fill="' + accent + '"/>' + artwork
+        + '<g font-family="Arial, sans-serif">'
+        + label(facts.businessName, 64, 88, 870, 30, 2, '#FFFFFF', 700)
+        + '<line x1="64" x2="936" y1="136" y2="136" stroke="#FFFFFF" stroke-opacity=".3"/>'
+        + label(design.headline || facts.businessName, 64, 235, heroWidth, picture ? 66 : 88, 3, '#FFFFFF', 700)
+        + label(design.subheading || facts.whatItDoes, 64, 492, heroWidth, 25, 3, '#FFFFFF')
+        + '<rect x="44" y="638" width="912" height="552" rx="24" fill="#FFFFFF"/>'
+        + label(prices.length ? 'SERVICES & PRICES' : 'ABOUT THE BUSINESS', 76, 684, 840, 18, 1, accent, 700)
+        + (prices.length ? rows : label(facts.whatItDoes, 76, 750, 840, 38, 6, '#211C18', 500))
+        + '<rect x="44" y="1220" width="912" height="150" rx="24" fill="' + accent + '"/>'
+        + label(facts.contact || facts.businessName, 76, 1265, 840, 29, 2, '#FFFFFF', 700)
+        + label(design.details, 76, 1340, 840, 18, 1, '#FFFFFF')
+        + '</g></svg>';
+
 }
 export function flyerHtml(svg: string): string { return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;background:#ece9e4}svg{display:block;width:100%;height:auto;max-width:1000px;margin:auto}@page{size:A4;margin:0}@media print{html,body{background:white}svg{width:210mm;height:297mm;max-width:none}}</style></head><body>${svg}</body></html>`; }

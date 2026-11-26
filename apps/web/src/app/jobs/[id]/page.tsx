@@ -1,4 +1,5 @@
 "use client";
+import { renderReport } from "@/lib/reportPresentation";
 import MediaExports from "@/components/MediaExports";
 
 import WalletGate from "@/components/WalletGate";
@@ -111,41 +112,6 @@ const COST_BLURB: Record<JobType, string> = {
   "promo-video": "The slideshow costs about a cent of AI time.",
 };
 
-/** Tiny markdown renderer for the report: headings, bold, lists, links, paragraphs. Escapes HTML first. */
-function renderReport(md: string): { __html: string } {
-  const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const inline = (s: string) =>
-    esc(s)
-      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-  const lines = md.split("\n");
-  let html = "";
-  let inList = false;
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (line.startsWith("### ")) {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<h3 style="font-size:17px;margin:18px 0 6px">${inline(line.slice(4))}</h3>`;
-    } else if (line.startsWith("## ")) {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<h2 style="font-size:20px;margin:22px 0 8px">${inline(line.slice(3))}</h2>`;
-    } else if (line.startsWith("# ")) {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<h2 style="font-size:22px;margin:22px 0 8px">${inline(line.slice(2))}</h2>`;
-    } else if (line.startsWith("- ")) {
-      if (!inList) { html += "<ul style=\"margin:6px 0 6px 18px;line-height:1.6\">"; inList = true; }
-      html += `<li>${inline(line.slice(2))}</li>`;
-    } else if (line === "") {
-      if (inList) { html += "</ul>"; inList = false; }
-    } else {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<p style="margin:8px 0;line-height:1.65">${inline(line)}</p>`;
-    }
-  }
-  if (inList) html += "</ul>";
-  return { __html: html };
-}
 
 /**
  * A delivered website or flyer, shown in a locked-down frame: the page

@@ -165,3 +165,5 @@ export function priceJob(input: QuoteInput): Quote {
 
 export { buildStandaloneSlideshowHtml, type SlideshowSlide } from "./slideshow.js";
 export { FLYER_DESIGN_SCHEMA, parseFlyerDesign, renderFlyerSvg, flyerHtml, type FlyerDesign, type FlyerFacts } from './flyer.js';
+
+export { promoScene } from "./promo.js";

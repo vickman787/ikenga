@@ -1,99 +1,41 @@
 "use client";
+import { useEffect, useState } from 'react';
+import { promoScene } from '@ikenga/shared';
 
-import { useEffect, useState } from "react";
-
-/**
- * The promo "video" — honestly a motion slideshow, not a video file.
- * The slides are the business's own words from its brief; this
- * component only moves between them. Play/pause, step forward and
- * back, and dots to jump to a slide. No video file is made here, and
- * the page says so in plain words next to the player. The first slide
- * carries the job's one picture, when the job has one — embedded in
- * the slide itself, never linked from anywhere else.
- */
+/** The delivered slides and their video export use the same scene palette. */
 export default function Slideshow({ slides }: { slides: { title: string; text: string; image?: string }[] }) {
   const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
   const total = slides.length;
-  const slide = slides[index] ?? { title: "", text: "" };
-
+  const active = Math.min(index, Math.max(0, total - 1));
+  const slide = slides[active];
   useEffect(() => {
     if (!playing || total <= 1) return;
-    const t = setInterval(() => setIndex((i) => (i + 1) % total), 4000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setIndex(i => (i + 1) % total), 4000);
+    return () => clearInterval(timer);
   }, [playing, total]);
-
-  if (total === 0) return null;
-
-  return (
-    <div>
-      <style>{`@keyframes ikenga-slide-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-      <div
-        key={index}
-        style={{
-          animation: "ikenga-slide-in 0.5s ease",
-          background: "var(--ink, #13271C)",
-          color: "#FBF9F4",
-          borderRadius: 16,
-          padding: "56px 28px",
-          minHeight: 280,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          gap: 14,
-        }}
-      >
-        <p style={{ fontSize: 13, letterSpacing: 2, textTransform: "uppercase", color: "#A3E36A" }}>
-          Slide {index + 1} of {total}
-        </p>
-        {slide.image && (
-          <img
-            src={slide.image}
-            alt=""
-            style={{ width: "100%", maxHeight: 320, objectFit: "cover", borderRadius: 12, display: "block" }}
-          />
-        )}
-        <h3 style={{ fontSize: 32, lineHeight: 1.15, margin: 0 }}>{slide.title}</h3>
-        <p style={{ fontSize: 18, lineHeight: 1.6, color: "#FBF9F4", opacity: 0.92, margin: 0 }}>{slide.text}</p>
+  if (!slide) return null;
+  const theme = promoScene(active);
+  const image = slide.image || (active % 2 === 0 ? slides[0]?.image : undefined);
+  const jump = (i: number) => { setPlaying(false); setIndex(i); };
+  return <div>
+    <style>{`@keyframes promo-enter{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}.promo-scene-copy{animation:promo-enter .5s ease}@media(prefers-reduced-motion:reduce){.promo-scene-copy{animation:none}}`}</style>
+    <div aria-label={`Promo scene ${active + 1} of ${total}`} style={{ position: 'relative', overflow: 'hidden', aspectRatio: '9 / 16', minHeight: 480, borderRadius: 24, background: theme.background, color: theme.ink }}>
+      {image && <img src={image} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '55%', objectFit: 'cover' }} />}
+      {image && <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(180deg,${theme.background}55 0%,transparent 25%,${theme.background} 58%)` }} />}
+      <div style={{ position: 'absolute', top: '6%', left: '8%', zIndex: 1, fontSize: 12, fontWeight: 700, letterSpacing: 3, color: theme.accent }}><span style={{ display: 'block', width: 32, height: 3, background: theme.accent, marginBottom: 12 }} />{String(active + 1).padStart(2, '0')} / {String(total).padStart(2, '0')}</div>
+      {!image && <span aria-hidden="true" style={{ position: 'absolute', top: '14%', right: '-2%', fontSize: 'clamp(100px,14vw,180px)', fontWeight: 800, letterSpacing: -12, opacity: .1, color: theme.accent }}>{String(active + 1).padStart(2, '0')}</span>}
+      <div key={active} className="promo-scene-copy" style={{ position: 'absolute', inset: image ? '55% 8% auto' : '39% 8% auto', overflowWrap: 'anywhere' }}>
+        <h3 style={{ fontSize: 'clamp(26px,3vw,42px)', lineHeight: 1.08, letterSpacing: '-.04em', color: 'inherit', margin: '0 0 20px', maxWidth: '15ch' }}>{slide.title}</h3>
+        <p style={{ fontSize: 'clamp(15px,1.6vw,19px)', lineHeight: 1.55, margin: 0, color: 'inherit', opacity: .9 }}>{slide.text}</p>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-        <button onClick={() => setPlaying((v) => !v)} className="btn leaf" type="button">
-          {playing ? "Pause ❚❚" : "Play ▶"}
-        </button>
-        <button
-          onClick={() => { setPlaying(false); setIndex((i) => (i - 1 + total) % total); }}
-          className="btn"
-          type="button"
-        >
-          ← Back
-        </button>
-        <button
-          onClick={() => { setPlaying(false); setIndex((i) => (i + 1) % total); }}
-          className="btn"
-          type="button"
-        >
-          Next →
-        </button>
-        <span style={{ display: "flex", gap: 6, marginLeft: 4 }}>
-          {slides.map((s, i) => (
-            <button
-              key={`${s.title}-${i}`}
-              type="button"
-              aria-label={`Go to slide ${i + 1}`}
-              onClick={() => { setPlaying(false); setIndex(i); }}
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: "50%",
-                border: "none",
-                cursor: "pointer",
-                background: i === index ? "#13271C" : "#c9c4b8",
-                padding: 0,
-              }}
-            />
-          ))}
-        </span>
-      </div>
+      <div aria-hidden="true" style={{ position: 'absolute', bottom: '7%', left: '8%', right: '8%', display: 'flex', gap: 5 }}>{slides.map((_, i) => <span key={i} style={{ height: 3, flex: 1, background: theme.accent, opacity: i <= active ? 1 : .22 }} />)}</div>
     </div>
-  );
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+      <button className="btn leaf" type="button" onClick={() => setPlaying(v => !v)} aria-label={playing ? 'Pause promo' : 'Play promo'}>{playing ? 'Pause' : 'Play promo'}</button>
+      <button className="btn" type="button" onClick={() => jump((active - 1 + total) % total)} aria-label="Previous promo scene">←</button>
+      <button className="btn" type="button" onClick={() => jump((active + 1) % total)} aria-label="Next promo scene">→</button>
+      <span style={{ fontSize: 13, marginLeft: 'auto', opacity: .65 }}>{active + 1} of {total} scenes</span>
+    </div>
+  </div>;
 }

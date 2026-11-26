@@ -621,7 +621,7 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     if (facts.businessName === "" && facts.whatItDoes === "" && facts.services.length === 0) {
       return refuse("The brief did not say what the business is or what it does — try again with the business name, what it does, and how to reach it.");
     }
-    return { ...p, stage: CREATIVE_STAGE_BUILD };
+    return { ...p, stage: upgraded ? 6 : CREATIVE_STAGE_BUILD };
   }
 
   if (!p.facts) {
@@ -689,6 +689,9 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     let prompt = buildPrompt(jobType, facts, p.revisionNote, upgraded) + (upgraded ? "\nDesign direction: respect the customer brand and audience. Use a deliberate visual hierarchy, generous spacing, readable contrast, and a strong contact ending. Avoid an identical generic design for every business. Use responsive CSS with no horizontal overflow at 360px. For flyers, include print-safe spacing and a fluid on-screen preview. For a slideshow, create a concise hook and coherent story; do not call it a rendered video. Creative wording is allowed; invented factual claims such as best or famous are not. Full original brief:\n" + brief : "");
     if(upgraded) prompt = prompt.replaceAll("every word on the page must come from the facts below or the brief", "all factual statements must be supported by the confirmed facts or brief").replaceAll("Every word must come from the facts or the brief", "Every factual statement must be supported by the facts or brief").replace("One column, max-width about 720px", "A thoughtful responsive layout: a spacious hero and service grid on desktop, a single-column flow on phones, max-width about 1100px");
     if(upgraded && jobType === "flyers")prompt=flyerPrompt(facts,brief,p.revisionNote);
+    if (upgraded && jobType === "website") prompt += "\nProfessional delivery standard: create a complete mobile-first business landing page, with a compact brand navigation, a distinctive two-column hero on desktop, a concise outcome-led headline, a prominent working contact link when confirmed, a balanced service grid, clear pricing and a designed contact footer. Use CSS grid, a considered type pairing using system fonts, a fluid clamp() type scale, varied section backgrounds and a consistent spacing scale. Use .hero img with object-fit:cover and an intentional aspect ratio; design gracefully when no picture is available. No fake reviews, counters, awards, discounts, stock image links, empty sections or placeholder copy. Use semantic headings, accessible contrast, visible focus states and a responsive single-column layout below 640px. This is a finished client website, not a document with headings.";
+    if (upgraded && jobType === "promo-video") prompt += "\nProfessional delivery standard: write a coherent five-scene promotional story: attention-grabbing hook, customer need grounded in the brief, actual service or product offer, concrete confirmed detail or price, then a direct contact ending. Use varied, concise headlines (maximum 55 characters) and one short supporting sentence (maximum 150 characters). Avoid repeating the business name on every scene, filler slogans, invented benefits or unconfirmed promises. The renderer supplies motion, composition and scene pacing; do not write camera instructions inside customer-facing text.";
+
     const maxTokens = jobType === "promo-video" ? 1200 : 4000;
     // --- The picture: one per job, made once at the design stage.
     // A revision reuses the picture already made (p.image is set).
