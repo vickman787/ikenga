@@ -71,6 +71,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     );
   }
 
+  if (revisionNote && ["accepted", "refunded", "rejected"].includes(hire.status)) return NextResponse.json({error:"This job is settled. Its delivered work and receipt are preserved."},{status:409});
+
   // Delivered work with a note: a revision, back to the writing stage,
   // reusing the pages Scout already read (or the facts already read).
   if (existing && existing.status === "delivered" && revisionNote) {

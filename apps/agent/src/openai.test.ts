@@ -96,3 +96,22 @@ describe("chatOpenAI (fake fetch)", () => {
     );
   });
 });
+
+it('refuses unconfigured model prices before making a paid request', async()=>{
+ let requests=0;
+ const fetchFn=(async()=>{requests++;return new Response('{}');}) as typeof fetch;
+ await expect(chatOpenAI({model:'unknown-model',messages:[{role:'user',content:'hi'}],fetchFn},'fake-key')).rejects.toThrow('No configured price');
+ expect(requests).toBe(0);
+});
+it('sends a strict schema and rejects truncated text while accounting for its usage', async()=>{
+ let body:any;let signal:AbortSignal|undefined;
+ const fetchFn=(async(_url:unknown,init?:RequestInit)=>{body=JSON.parse(String(init?.body));signal=init?.signal as AbortSignal;return new Response(JSON.stringify({choices:[{finish_reason:'length',message:{content:'<html>incomplete'}}],usage:{prompt_tokens:100,completion_tokens:100,total_tokens:200}}));}) as typeof fetch;
+ const result=await chatOpenAI({model:OPENAI_MODEL_WORK,messages:[{role:'user',content:'Return JSON'}],responseSchema:{name:'check',schema:{type:'object',properties:{},required:[],additionalProperties:false}},fetchFn},'fake-key');
+ expect(result.text).toBe('');expect(result.costUsd).toBeGreaterThan(0);expect(body.response_format.json_schema.strict).toBe(true);expect(signal).toBeInstanceOf(AbortSignal);
+});
+
+it('reserves a nonzero worst-case cost when usage is omitted',async()=>{
+ const fetchFn=(async()=>new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'Hello'}}]}))) as typeof fetch;
+ const result=await chatOpenAI({model:OPENAI_MODEL_WORK,messages:[{role:'user',content:'hi'}],fetchFn},'fake-key');
+ expect(result.costUsd).toBeGreaterThan(0);expect(result.usage.completionTokens).toBe(1024);
+});

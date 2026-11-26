@@ -84,3 +84,5 @@ export {
   type BillUpdate,
   type SiteBill,
 } from "./bills.js";
+
+export { GENERATOR_VERSION } from "./quality.js";

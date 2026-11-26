@@ -24,7 +24,7 @@ export const OrderSchema = z.object({
   id: z.string().min(1),
   jobType: z.enum(JOB_TYPES),
   customerWallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be an EVM address"),
-  description: z.string().min(1).max(500),
+  description: z.string().min(1).max(4000),
   status: z.enum(["draft", "escrowed", "in-progress", "delivered", "accepted", "rejected", "refunded"]),
   createdAt: z.string(),
 });

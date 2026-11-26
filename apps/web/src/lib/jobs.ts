@@ -20,6 +20,7 @@
  * routes under app/api/jobs/[id]/.
  */
 import { z } from "zod";
+import { composeJobBrief } from "./jobBrief";
 import { Pool } from "pg";
 import { JOB_TYPES, priceJob, type JobType } from "@ikenga/shared";
 import {
@@ -133,7 +134,8 @@ export function deliveryStageLabel(jobType: JobType, stage: number): string {
 
 export const HireInputSchema = z.object({
   jobType: z.enum(JOB_TYPES),
-  description: z.string().min(1, "Describe the job").max(500),
+  description: z.string().trim().min(1, "Describe the job").max(4000),
+  briefDetails: z.record(z.string().max(500)).optional(),
   customerWallet: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "Enter a valid wallet address (0x…)"),
   /** Which currency to pay the $1 in. USDT on mainnet, cNGN on mainnet,
    * test USDC on Sepolia. Defaults to the chain's own currency. */
@@ -475,9 +477,13 @@ export async function setReport(id: string, report: StoredReport): Promise<void>
 /** A saved report as the staged runner's progress (the brief comes from the hire). */
 export function reportToProgress(report: StoredReport, brief: string): ReportProgress {
   return {
+    generatorVersion: report.generatorVersion ?? 1,
     stage: report.stage,
     brief,
     revisionNote: report.revisionNote,
+    researchPlan: report.researchPlan,
+    searchCursor: report.searchCursor,
+    readCursor: report.readCursor,
     candidates: report.candidates ?? [],
     pages: report.pages ?? [],
     plan: report.plan ?? "",
@@ -501,6 +507,10 @@ export function reportToProgress(report: StoredReport, brief: string): ReportPro
 /** The staged runner's progress as a saved report. */
 export function progressToReport(progress: ReportProgress): StoredReport {
   return {
+    generatorVersion: progress.generatorVersion,
+    researchPlan: progress.researchPlan,
+    searchCursor: progress.searchCursor,
+    readCursor: progress.readCursor,
     report: progress.report,
     sources: progress.sources,
     steps: progress.steps,
@@ -524,6 +534,7 @@ export function progressToReport(progress: ReportProgress): StoredReport {
 /** A fresh, not-yet-started report for a hire. */
 export function emptyStoredReport(): StoredReport {
   return {
+    generatorVersion: 2,
     report: "",
     sources: [],
     steps: [],
@@ -532,7 +543,7 @@ export function emptyStoredReport(): StoredReport {
     status: "in-progress",
     revisions: 0,
     deliveredAt: "",
-    stage: 1,
+    stage: 10,
     pages: [],
     plan: "",
     checkText: "",
@@ -549,6 +560,7 @@ export function deliverableKindFor(jobType: JobType): "report" | "website" | "fl
 /** A fresh, not-yet-started creative delivery for a hire. */
 export function emptyStoredCreative(jobType: JobType): StoredReport {
   return {
+    generatorVersion: 2,
     report: "",
     sources: [],
     steps: [],
@@ -684,6 +696,12 @@ export async function startFreshRun(id: string): Promise<StartFreshRunResult> {
 
   await setHireStatus(id, "in-progress");
   const stored = isReport ? emptyStoredReport() : emptyStoredCreative(hire.jobType);
+  const previous = await getReport(id);
+  if (previous?.generatorVersion === 2 && previous.status === "refused") {
+    stored.totalCostUsd = previous.totalCostUsd;
+    stored.totalTokens = previous.totalTokens;
+    stored.steps = [...previous.steps];
+  }
   await setReport(id, stored);
   const job = await getHire(id);
   return {
@@ -698,6 +716,7 @@ export async function startFreshRun(id: string): Promise<StartFreshRunResult> {
 /** A saved creative delivery as the staged runner's progress (the brief comes from the hire). */
 export function creativeToProgress(report: StoredReport, brief: string, jobType: CreativeJobType): CreativeProgress {
   return {
+    generatorVersion: report.generatorVersion ?? 1,
     stage: report.stage,
     jobType,
     brief,
@@ -720,6 +739,7 @@ export function creativeToProgress(report: StoredReport, brief: string, jobType:
 /** The staged runner's progress as a saved creative delivery. */
 export function progressToCreative(progress: CreativeProgress): StoredReport {
   return {
+    generatorVersion: progress.generatorVersion,
     report: "",
     sources: [],
     steps: progress.steps,
@@ -758,6 +778,7 @@ export interface CreateHireDeps {
 
 export async function createHire(input: HireInput, deps: CreateHireDeps = {}): Promise<HireResult> {
   const parsed = HireInputSchema.parse(input);
+  parsed.description = composeJobBrief(parsed.jobType, parsed.description, parsed.briefDetails);
   const config = deps.chainConfig ?? getChainConfig();
   // The currency defaults to the chain's own: USDT on mainnet, test
   // USDC on Sepolia. Anything else must be offered on this chain.

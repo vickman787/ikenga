@@ -514,9 +514,8 @@ function JobWorkspace() {
                 <p style={{ color: "var(--ink-2)", lineHeight: 1.6 }}>
                   The team could not finish this job: {data.report.reason}
                 </p>
-                <button onClick={() => startWork()} disabled={running} className="btn leaf lg" style={{ marginTop: 16 }}>
-                  {running ? "The team is working…" : "Try again →"}
-                </button>
+                {data.job.escrowState === "funded" && <><p style={{marginTop:12}}>Your payment is still in escrow. You can retry within this job’s remaining budget or request your refund.</p><div style={{display:"flex",gap:12,flexWrap:"wrap",marginTop:16}}><button onClick={() => startWork()} disabled={running || deciding} className="btn leaf" type="button">{running ? "The team is working…" : "Try again"}</button><button onClick={()=>decide("reject")} disabled={deciding || running} className="btn" type="button">Request refund</button></div></>}
+                {decisionMsg && <p role="status" style={{marginTop:12}}>{decisionMsg}</p>}
                 {runError && <p className="error" style={{ marginTop: 12 }}>{runError}</p>}
               </div>
             )}

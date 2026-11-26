@@ -71,8 +71,12 @@ export interface LedgerOrder {
  * Stored as one JSON document in the deliveries table (and in memory for
  * the MemoryLedger). `stage` is the next stage to run; 0 means finished. */
 export interface StoredReportData {
+  generatorVersion?: 1 | 2;
+  researchPlan?: { subjects: string[]; questions: string[]; queries: string[] };
+  searchCursor?: number;
+  readCursor?: number;
   report: string;
-  sources: { title: string; url: string }[];
+  sources: { title: string; url: string; retrievedAt?: string }[];
   steps: { agent: "Scout" | "Reader" | "Researcher" | "Writer" | "Analyst" | "Auditor" | "Designer" | "Producer" | "Messenger"; what: string; detail: string; model?: string; tokens?: number; costUsd?: number }[];
   totalTokens: number;
   totalCostUsd: number;
@@ -82,7 +86,7 @@ export interface StoredReportData {
   deliveredAt: string;
   stage: number;
   /** Pages Scout read (kept so later stages — and a revision — reuse them). */
-  pages?: { title: string; url: string; text: string }[];
+  pages?: { title: string; url: string; text: string; retrievedAt?: string }[];
   /** Candidate pages Scout found, waiting for Reader to read them
    * (kept so the chunked run survives between stages). */
   candidates?: { title: string; url: string }[];

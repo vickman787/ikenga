@@ -1,5 +1,7 @@
 "use client";
 
+import JobBriefFields from "./JobBriefFields";
+import { composeJobBrief } from "@/lib/jobBrief";
 import { ensureWalletSession } from "@/lib/walletLogin";
 import { useEffect, useState } from "react";
 import { JOB_LABELS, JOB_TYPES, type JobType } from "@ikenga/shared";
@@ -341,6 +343,7 @@ export function PayPanel({
 export default function HireForm() {
   const [jobType, setJobType] = useState<JobType>("website");
   const [description, setDescription] = useState("");
+  const [briefDetails, setBriefDetails] = useState<Record<string,string>>({});
   const [account, setAccount] = useState<Address | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -440,11 +443,12 @@ export default function HireForm() {
     }
     setBusy(true);
     try {
+      composeJobBrief(jobType, description, briefDetails);
       await ensureWalletSession(account);
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobType, description, customerWallet: account, payCurrency: currency }),
+        body: JSON.stringify({ jobType, description, briefDetails, customerWallet: account, payCurrency: currency }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not create the job");
@@ -549,19 +553,23 @@ export default function HireForm() {
           )}
         </div>
 
+        <JobBriefFields jobType={jobType} values={briefDetails} onChange={(key,value)=>setBriefDetails(previous=>({...previous,[key]:value}))} />
         <div>
           <label htmlFor="description" className="field">
-            Describe the job
-            <span className="hint">Say what you need in a sentence.</span>
+            {jobType === "market-report" ? "Questions the report must answer" : "Services, prices and other details"}
+            <span className="hint">Include exact facts, opening hours and anything the finished work must contain.</span>
           </label>
-          <input
+          <textarea
             id="description"
-            type="text"
+            required
+            rows={5}
+            maxLength={2500}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder={DESCRIPTION_PLACEHOLDERS[jobType]}
-            style={{ marginTop: 10 }}
+            style={{ marginTop: 10, width: "100%", resize: "vertical" }}
           />
+          {jobType === "promo-video" && <p className="hint" style={{marginTop:8}}>This service currently delivers an animated slideshow and HTML download. MP4 export is not available yet.</p>}
         </div>
 
         <div>

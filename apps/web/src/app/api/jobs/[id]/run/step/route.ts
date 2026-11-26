@@ -51,6 +51,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ job: hire, report: before, nextStage: 0, done: true });
   }
 
+  if (hire.status !== "in-progress") return NextResponse.json({error:"This job is no longer running."},{status:409});
   const stepsBefore = before.steps.length;
   const isReport = hire.jobType === "market-report";
   const stored = isReport
@@ -58,6 +59,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     : progressToCreative(
         await runCreativeStage(creativeToProgress(before, hire.description, hire.jobType as CreativeJobType), {}),
       );
+  const current = await getHire(id);
+  if (current?.status !== "in-progress") return NextResponse.json({error:"The job changed while this step was running. No delivery was recorded."},{status:409});
   await setReport(id, stored);
 
   const ledger = await getLedger();
@@ -91,8 +94,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       entry: `work|delivered|${stored.totalTokens}|${Math.round(stored.totalCostUsd * 1_000_000)}`,
     });
   } else if (stored.status === "refused") {
-    // Back to draft, so the customer can try again with a clearer brief.
-    await setHireStatus(id, "draft");
+    // A failed quality check does not erase an already funded escrow.
+    await setHireStatus(id, stored.generatorVersion === 2 ? "escrowed" : "draft");
   }
   const job = await getHire(id);
   return NextResponse.json({
