@@ -85,6 +85,7 @@ export default function WorkspaceHome({ live, children }: { live: Live; children
         <a href="#work"><Icon name="chart" />Activity totals</a>
         <a href="#pay"><Icon name="wallet" />USDT & cNGN</a>
         <a href="/bills"><Icon name="wallet" />Pay a naira bill</a>
+        <a href="/bills/history"><Icon name="book" />My bill history</a>
       </nav>
       <span className="ws-nav-label">BEHIND THE WORK</span>
       <nav onClick={closeMenu} aria-label="About Ikenga">

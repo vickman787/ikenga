@@ -66,6 +66,7 @@ export default function BillsPage() {
           </span>
         </div>
         <h1 style={{ fontSize: 36, marginTop: 14 }}>Pay a naira bill</h1>
+        <p style={{ marginTop: 14 }}><a href="/bills/history" className="btn secondary">My bill history →</a></p>
         <p style={{ marginTop: 10, fontSize: "var(--lede)", color: "var(--ink-2)", lineHeight: 1.6 }}>
           You owe someone in naira. We change USDT to cNGN on Celo and pay them in cNGN — only at the rate
           you name, or better. If the rate never reaches yours, we wait until the day you pick, then pay
@@ -153,3 +154,4 @@ export default function BillsPage() {
     </>
   );
 }
+

@@ -13,6 +13,7 @@ const LINKS: [string, string][] = [
   ["#cfo", "The AI CFO"],
   ["#pay", "Ikenga Pay"],
   ["/bills", "Pay a naira bill"],
+  ["/bills/history", "My bills"],
   ["https://github.com/vickman787/ikenga/tree/main/docs", "Docs"],
 ];
 
@@ -22,6 +23,7 @@ const GROUPS: { title: string; items: [string, string, string?][] }[] = [
     items: [
       ["#services", "Services", "4 jobs, $1 each"],
       ["/bills", "Pay a naira bill", "USDT → cNGN for a supplier"],
+      ["/bills/history", "My bill history", "Your funded bills and receipts"],
       ["#how", "How it works"],
       ["#work", "Real work"],
       ["#pay", "Pay in USDT or cNGN"],
@@ -101,3 +103,4 @@ export default function Nav() {
     </header>
   );
 }
+

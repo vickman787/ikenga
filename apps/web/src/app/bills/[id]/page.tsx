@@ -231,6 +231,7 @@ export default function BillPage() {
       <Nav />
       <main className="wrap" style={{ paddingTop: 48, paddingBottom: 96, maxWidth: 820 }}>
         <a href="/bills" style={{ fontSize: 14, color: "var(--muted)" }}>← Back to naira bills</a>
+        <a href="/bills/history" style={{ marginLeft: 20, fontSize: 14 }}>My bill history →</a>
         {error && !data && (
           <div className="card pad" style={{ marginTop: 24 }}>
             <h1 style={{ fontSize: 28 }}>Bill not found</h1>
