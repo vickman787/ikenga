@@ -275,7 +275,10 @@ export async function findBillByFundingTxHash(txHash: string): Promise<BillResul
 /**
  * Record a funding payment on a bill — after the update route has
  * verified the transfer onchain (successful, USDT, from the payer's
- * wallet, to the agent wallet, for exactly this amount).
+ * wallet, to the agent wallet). The amount recorded is the transfer's
+ * actual onchain amount: the page reports what it computed as still
+ * needed, but the quote moves and a payer may round up, so a top-up
+ * for more or less than that still counts at what actually arrived.
  *
  * The payment is added to the bill's own funding total, so a second
  * transfer tops the same bill up when the rate moved and more is
