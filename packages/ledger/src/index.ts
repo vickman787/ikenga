@@ -1,3 +1,4 @@
+import { startStage, claimStage, reserveStage, settleStage, completeStage, abandonStage, type StageLease, type StageChange } from "./stage-state.js";
 /**
  * @ikenga/ledger — the audit ledger.
  *
@@ -71,7 +72,10 @@ export interface LedgerOrder {
  * Stored as one JSON document in the deliveries table (and in memory for
  * the MemoryLedger). `stage` is the next stage to run; 0 means finished. */
 export interface StoredReportData {
+  stageLease?: StageLease;
   generatorVersion?: 1 | 2;
+  auditText?: string;
+  designSvg?: string;
   researchPlan?: { subjects: string[]; questions: string[]; queries: string[] };
   searchCursor?: number;
   readCursor?: number;
@@ -287,6 +291,13 @@ export interface BillPatch {
 }
 
 export interface Ledger {
+  startReportRun(id:string,initial:StoredReportData):Promise<StoredReportData|null>;
+  claimReportStage(id:string,stage:number,token:string):Promise<StoredReportData|null>;
+  reserveReportCost(id:string,token:string,usd:number):Promise<StoredReportData|null>;
+  settleReportCost(id:string,token:string,usd:number):Promise<StoredReportData|null>;
+  completeReportStage(id:string,token:string,result:StoredReportData):Promise<StoredReportData|null>;
+  abandonReportStage(id:string,token:string):Promise<StoredReportData|null>;
+
   createOrder(order: Omit<LedgerOrder, "createdAt" | "priceMicroUsdc"> & { priceMicroUsdc?: number }): Promise<LedgerOrder>;
   getOrder(id: string): Promise<LedgerOrder | null>;
   listOrders(): Promise<LedgerOrder[]>;
@@ -326,6 +337,20 @@ export interface Ledger {
 }
 
 export class MemoryLedger implements Ledger {
+  async startReportRun(id:string,initial:StoredReportData){return this.mutateStage(id,(r,status)=>startStage(r,status,initial),initial);}
+  async claimReportStage(id:string,stage:number,token:string){return this.mutateStage(id,(r,status)=>claimStage(r,status,stage,token,Date.now()));}
+  async reserveReportCost(id:string,token:string,usd:number){return this.mutateStage(id,(r,status)=>reserveStage(r,status,token,usd,Date.now()));}
+  async settleReportCost(id:string,token:string,usd:number){return this.mutateStage(id,r=>settleStage(r,token,usd,Date.now()));}
+  async completeReportStage(id:string,token:string,result:StoredReportData){return this.mutateStage(id,(r,status)=>completeStage(r,status,token,result,Date.now()));}
+  async abandonReportStage(id:string,token:string){return this.mutateStage(id,r=>abandonStage(r,token));}
+
+  private async mutateStage(id:string,change:(r:StoredReportData,status:string)=>StageChange|null,initial?:StoredReportData):Promise<StoredReportData|null>{
+    const report=this.reports.get(id)??initial;const order=this.orders.get(id);if(!report||!order)return null;
+    const result=change(structuredClone(report),order.status);if(!result)return null;
+    this.reports.set(id,result.report);if(result.orderStatus)this.orders.set(id,{...order,status:result.orderStatus});
+    return structuredClone(result.report);
+  }
+
   private orders = new Map<string, LedgerOrder>();
   private decisions = new Map<string, LedgerDecision[]>();
   private fxSwaps = new Map<string, FxSwapRecord[]>();
@@ -527,6 +552,31 @@ export function loadSchemaSql(): string {
 
 /** Postgres-backed ledger. Step 1: schema + append/read; reconciliation is Step 2+. */
 export class PostgresLedger implements Ledger {
+  async startReportRun(id:string,initial:StoredReportData){return this.mutateStage(id,(r,status)=>startStage(r,status,initial),initial);}
+  async claimReportStage(id:string,stage:number,token:string){return this.mutateStage(id,(r,status)=>claimStage(r,status,stage,token,Date.now()));}
+  async reserveReportCost(id:string,token:string,usd:number){return this.mutateStage(id,(r,status)=>reserveStage(r,status,token,usd,Date.now()));}
+  async settleReportCost(id:string,token:string,usd:number){return this.mutateStage(id,r=>settleStage(r,token,usd,Date.now()));}
+  async completeReportStage(id:string,token:string,result:StoredReportData){return this.mutateStage(id,(r,status)=>completeStage(r,status,token,result,Date.now()));}
+  async abandonReportStage(id:string,token:string){return this.mutateStage(id,r=>abandonStage(r,token));}
+
+  private async mutateStage(id:string,change:(r:StoredReportData,status:string)=>StageChange|null,initial?:StoredReportData):Promise<StoredReportData|null>{
+    const client=await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Locks are held only for this short transition, never while calling a model.
+      // All stage transitions lock the order first, then its delivery.
+      const order=await client.query('SELECT status FROM orders WHERE id=$1 FOR UPDATE',[id]);
+      const delivery=await client.query('SELECT data FROM deliveries WHERE order_id=$1 FOR UPDATE',[id]);
+      if(!order.rows[0]||!delivery.rows[0]&&!initial){await client.query('ROLLBACK');return null;}
+      const data=delivery.rows[0]?.data??initial;const report=(typeof data==='string'?JSON.parse(data):data) as StoredReportData;
+      const result=change(report,order.rows[0].status);
+      if(!result){await client.query('ROLLBACK');return null;}
+      await client.query('INSERT INTO deliveries (order_id,status,stage,data,updated_at) VALUES ($1,$2,$3,$4::jsonb,now()) ON CONFLICT (order_id) DO UPDATE SET status=EXCLUDED.status,stage=EXCLUDED.stage,data=EXCLUDED.data,updated_at=now()',[id,result.report.status,result.report.stage,JSON.stringify(result.report)]);
+      if(result.orderStatus)await client.query('UPDATE orders SET status=$2 WHERE id=$1',[id,result.orderStatus]);
+      await client.query('COMMIT');return result.report;
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  }
+
   constructor(private pool: Pool) {}
 
   async init(): Promise<void> {

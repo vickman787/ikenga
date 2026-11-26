@@ -1,3 +1,5 @@
+const FACTS_SCHEMA={type:'object',additionalProperties:false,properties:{businessName:{type:'string'},whatItDoes:{type:'string'},services:{type:'array',items:{type:'string'}},prices:{type:'array',items:{type:'object',additionalProperties:false,properties:{item:{type:'string'},price:{type:'string'},listed:{type:'boolean'}},required:['item','price','listed']}},contact:{type:'string'},colours:{type:'string'},notes:{type:'string'}},required:['businessName','whatItDoes','services','prices','contact','colours','notes']};
+import { FLYER_DESIGN_SCHEMA, parseFlyerDesign, renderFlyerSvg, flyerHtml } from "@ikenga/shared";
 import { QUALITY_SCHEMA, QUALITY_INSTRUCTIONS, qualityPassed, qualitySummary, unconfirmedPrices } from "./quality.js";
 /**
  * The creative jobs — the website, the flyers, and the promo video.
@@ -122,6 +124,8 @@ export const CREATIVE_STAGE_LABELS: Record<CreativeJobType, Record<number, strin
 };
 
 export function creativeStageLabel(stage: number, jobType: CreativeJobType): string {
+  if(stage===6)return "Creating the picture for your work";
+  if(stage===7)return "Correcting the issues found in review";
   return CREATIVE_STAGE_LABELS[jobType]?.[stage] ?? "";
 }
 
@@ -190,6 +194,8 @@ export interface CreativeResult {
  */
 export interface CreativeProgress {
   generatorVersion?: 1 | 2;
+  auditText?: string;
+  designSvg?: string;
   stage: number;
   jobType: CreativeJobType;
   brief: string;
@@ -581,17 +587,18 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
         what: `Read the brief again — ${p.facts.businessName ? `"${p.facts.businessName}"` : "the business"}: ${p.facts.whatItDoes || "what it does, its services and its contact"}.`,
         detail: factsText(p.facts).slice(0, 400),
       });
-      return { ...p, stage: CREATIVE_STAGE_BUILD };
+      return { ...p, stage: upgraded ? 6 : CREATIVE_STAGE_BUILD };
     }
     const factsPrompt = `You are ${builder}, reading a customer's brief for a ${noun} for a small business in Nigeria.\n\nThe brief:\n${brief}\n${p.revisionNote ? "Customer corrections (override earlier facts): " + p.revisionNote : ""}\n\nReply with JSON ONLY, in this shape: {"businessName": "...", "whatItDoes": "...", "services": ["..."], "prices": [{"item": "...", "price": "...", "listed": true}], "contact": "...", "colours": "...", "notes": "..."}.\n\nRules: only use facts from the brief. If the brief does not name the business, leave businessName empty. If a price is not in the brief, do not list it as a price — either leave it out of prices or list it with listed: false and price: "price not listed". Never invent a business name, a price, a phone number, an address or a service. If the brief has no usable facts at all, reply with {"businessName": "", "whatItDoes": "", "services": [], "prices": [], "contact": "", "colours": "", "notes": "no usable facts in the brief"}.`;
     if (!withinBudget(OPENAI_MODEL_WORK, factsPrompt, 1200)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const read = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: factsPrompt }], maxTokens: 1200, reasoningEffort: "low" });
+    const read = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: factsPrompt }], ...(upgraded?{responseSchema:{name:"creative_facts",schema:FACTS_SCHEMA}}:{}), maxTokens: 1200, reasoningEffort: "low" });
     charge(read, builder, `Read the brief.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
     let facts = parseFacts(read.text);
     if (!facts) {
+      if(upgraded)return refuse("The confirmed business facts could not be read clearly. Please check the brief.");
       if (!withinBudget(OPENAI_MODEL_WORK, factsPrompt + " Reply with JSON only.", 1200)) return refuse("Reading the brief again would exceed the job budget.");
       // One retry: the model may have answered in words instead of JSON.
       const retry = await chat({
@@ -632,12 +639,12 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
       const slides = p.slides.map((s) => ({ title: s.title, text: s.text, ...(s.image ? { image: "[picture]" } : {}) }));
       return JSON.stringify({ slides }, null, 2);
     }
-    return p.html.replace(/<img\b[^>]*>/gi, "<img [picture]>");
+    return p.html.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g,"[picture]").replace(/<img\b[^>]*>/gi, "<img [picture]>");
   };
   /** The picture, once made, belongs in the finished work — on the
    * first slide for a slideshow, after the headline for a page. */
   const attachImage = (): void => {
-    if (!p.image) return;
+    if (!p.image || upgraded && jobType === "flyers") return;
     if (jobType === "promo-video") {
       if (p.slides.length > 0) {
         p.slides = [{ ...p.slides[0], image: p.image }, ...p.slides.slice(1)];
@@ -648,10 +655,40 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     p.html = insertHeroImage(p.html, p.image, alt);
   };
 
+  if(upgraded && p.stage===6){
+    const prompt=buildPrompt(jobType,facts,p.revisionNote,true);
+    const maxTokens=jobType==='promo-video'?1200:4000;
+    if (!p.image) {
+      const imageFn =
+        deps.image ??
+        (process.env.OPENAI_API_KEY ? async (input: { prompt: string }) => generateImageOpenAI(input) : undefined);
+      if (imageFn) {
+        if (p.totalCostUsd + OPENAI_IMAGE_PRICE_USD + worstCaseCostUsd(OPENAI_MODEL_WORK, promptTokenUpperBound(prompt), maxTokens) > CREATIVE_MODEL_BUDGET_USD) {
+          p.steps.push({ agent: builder, what: "No picture this time — it would not fit in the $0.50 set aside for this job.", detail: "The work is delivered without a picture; nothing else changed." });
+        } else {
+          try {
+            const made = await imageFn({ prompt: buildImagePrompt(facts, jobType) });
+            if (made && made.dataUri) {
+              p.image = made.dataUri;
+              p.totalCostUsd = Math.round((p.totalCostUsd + made.costUsd) * 1_000_000) / 1_000_000;
+              p.steps.push({ agent: builder, what: "Made one picture for the work.", detail: `A picture of ${facts.businessName || "the business"} — ${made.model}, about ${made.costUsd.toFixed(3)}.`, model: made.model, costUsd: made.costUsd });
+            } else {
+              p.steps.push({ agent: builder, what: "No picture this time — the picture did not come back.", detail: "The work is delivered without a picture; nothing else changed." });
+            }
+          } catch {
+            p.steps.push({ agent: builder, what: "No picture this time — the picture service did not answer.", detail: "The work is delivered without a picture; nothing else changed." });
+          }
+        }
+      }
+    }
+
+    return {...p,stage:CREATIVE_STAGE_BUILD};
+  }
   // --- Stage 2: build the work from the facts. ---
   if (p.stage === CREATIVE_STAGE_BUILD) {
     let prompt = buildPrompt(jobType, facts, p.revisionNote, upgraded) + (upgraded ? "\nDesign direction: respect the customer brand and audience. Use a deliberate visual hierarchy, generous spacing, readable contrast, and a strong contact ending. Avoid an identical generic design for every business. Use responsive CSS with no horizontal overflow at 360px. For flyers, include print-safe spacing and a fluid on-screen preview. For a slideshow, create a concise hook and coherent story; do not call it a rendered video. Creative wording is allowed; invented factual claims such as best or famous are not. Full original brief:\n" + brief : "");
     if(upgraded) prompt = prompt.replaceAll("every word on the page must come from the facts below or the brief", "all factual statements must be supported by the confirmed facts or brief").replaceAll("Every word must come from the facts or the brief", "Every factual statement must be supported by the facts or brief").replace("One column, max-width about 720px", "A thoughtful responsive layout: a spacious hero and service grid on desktop, a single-column flow on phones, max-width about 1100px");
+    if(upgraded && jobType === "flyers")prompt=flyerPrompt(facts,brief,p.revisionNote);
     const maxTokens = jobType === "promo-video" ? 1200 : 4000;
     // --- The picture: one per job, made once at the design stage.
     // A revision reuses the picture already made (p.image is set).
@@ -661,7 +698,7 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     // the service at all (no key, no injected stand-in), it is
     // skipped quietly: the live run gate already stops a job without
     // a key, so this only happens in tests and local runs.
-    if (!p.image) {
+    if (!p.image && !upgraded) {
       const imageFn =
         deps.image ??
         (process.env.OPENAI_API_KEY ? async (input: { prompt: string }) => generateImageOpenAI(input) : undefined);
@@ -687,10 +724,16 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     if (!withinBudget(OPENAI_MODEL_WORK, prompt, maxTokens)) {
       return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
     }
-    const built = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: prompt }], maxTokens });
+    const flyer = upgraded && jobType === "flyers";
+    const built = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: prompt }], ...(flyer ? {responseSchema:{name:"flyer_design",schema:FLYER_DESIGN_SCHEMA}} : {}), maxTokens });
     charge(built, builder, jobType === "promo-video" ? "Put the slideshow together from the brief." : `Built the ${noun} from the brief.`);
     if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
-    if (jobType === "promo-video") {
+    if(flyer){
+      const design=parseFlyerDesign(built.text);
+      if(!design)return refuse("The flyer design was incomplete.");
+      try {p.designSvg=renderFlyerSvg(facts,design,p.image);p.html=flyerHtml(p.designSvg);}catch(error){return refuse(error instanceof Error?error.message:"The flyer text could not fit.");}
+      p.slides=[];p.steps[p.steps.length-1].detail="Created a self-contained print design with a checked text layout.";
+    } else if (jobType === "promo-video") {
       const slides = parseSlides(built.text);
       if (!slides) {
         return refuse("The slideshow did not come back in a readable shape — try the job again.");
@@ -730,6 +773,46 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
     return { ...p, stage: upgraded && p.revisions > 0 ? CREATIVE_STAGE_REAUDIT : CREATIVE_STAGE_AUDIT };
   }
 
+  function flyerPrompt(facts:CreativeFacts,original:string,note?:string):string {
+    return 'You are Designer, making a refined flyer. Return JSON only: {"headline":"short offer headline","subheading":"one useful line about the business","details":"opening hours and location if supplied","accent":"#RRGGBB","background":"#RRGGBB"}. Business name, services, prices and contact are placed exactly from confirmed facts by the renderer. Do not repeat the price list in the headline or subheading. Use the customer’s colours; choose a dark accent readable behind white text and a light background. No invented claims or missing requested facts. Facts: '+factsText(facts)+'\nOriginal brief: '+original+'\nCorrections: '+(note??'none');
+  }
+  async function revise(auditText:string):Promise<CreativeProgress>{
+    const priceIssues=upgraded?unconfirmedPrices(deliverableText(),brief+'\n'+(p.revisionNote??'')):[];
+    let fixPrompt =
+      jobType === "promo-video"
+        ? `You are Producer. The Auditor read your slideshow and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\nAnalyst checks: ${p.checkText}\nDeterministic checks: ${priceIssues.join("; ")}\n\nThe slideshow:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn JSON ONLY, same shape as before: {"slides": [{"title": "...", "text": "..."}]}. Do not invent any fact.`
+        : `You are ${builder}. The Auditor read your ${noun} and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\nAnalyst checks: ${p.checkText}\nDeterministic checks: ${priceIssues.join("; ")}\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn the full corrected ${noun} as HTML, same shape as before. Do not invent any fact. No JavaScript, no external pictures, no forms.`;
+    const flyer=upgraded && jobType==="flyers";
+    if(flyer)fixPrompt=flyerPrompt(facts,brief,p.revisionNote)+"\nQuality corrections: "+auditText+"\nAnalyst: "+p.checkText;
+    const fixMaxTokens = jobType === "promo-video" ? 1200 : 4000;
+    if (!withinBudget(OPENAI_MODEL_WORK, fixPrompt, fixMaxTokens)) {
+      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
+    }
+    const fixed = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], ...(flyer?{responseSchema:{name:"flyer_design",schema:FLYER_DESIGN_SCHEMA}}:{}), maxTokens: fixMaxTokens });
+    charge(fixed, builder, `Revised the ${noun} once, fixing what the Auditor flagged.`);
+    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
+    if(flyer){
+      const design=parseFlyerDesign(fixed.text);if(!design)return refuse("The revised flyer was incomplete.");
+      try{p.designSvg=renderFlyerSvg(facts,design,p.image);p.html=flyerHtml(p.designSvg);}catch(error){return refuse(error instanceof Error?error.message:"The flyer text could not fit.");}
+    } else if (jobType === "promo-video") {
+      const slides = parseSlides(fixed.text);
+      if (!slides) return refuse("The revised slideshow did not come back in a readable shape — try the job again.");
+      p.slides = slides;
+      p.steps[p.steps.length - 1].detail = `${slides.length} slides, revised.`;
+    } else {
+      const rawHtml = sanitizeHtml(extractHtmlDocument(fixed.text));
+      const html = jobType === "flyers" ? pruneUnknownPriceRows(rawHtml, facts) : rawHtml;
+      if (html.length < 120 || !/<(h1|h2)[\s>]/.test(html)) return refuse(`The revised ${noun} did not come back as a finished page — try the job again.`);
+      p.html = html;
+      p.steps[p.steps.length - 1].detail = "Revised once.";
+    }
+    // The revised work gets the same picture back — it was made once.
+    attachImage();
+    p.revisions += 1;
+    return { ...p, stage: upgraded ? CREATIVE_STAGE_CHECK : CREATIVE_STAGE_REAUDIT };
+  }
+  if(upgraded && p.stage===7)return revise(p.auditText??'The previous quality check was incomplete.');
+
   // --- Stages 4 and 5, Auditor: a different model reads it and says pass or fix. ---
   if (p.stage === CREATIVE_STAGE_AUDIT || p.stage === CREATIVE_STAGE_REAUDIT) {
     const isReaudit = p.stage === CREATIVE_STAGE_REAUDIT;
@@ -754,33 +837,7 @@ export async function runCreativeStage(progress: CreativeProgress, deps: RunCrea
       return deliver();
     }
     // One free revision: rebuild it, fixing what the Auditor flagged.
-    const fixPrompt =
-      jobType === "promo-video"
-        ? `You are Producer. The Auditor read your slideshow and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\nAnalyst checks: ${p.checkText}\nDeterministic checks: ${priceIssues.join("; ")}\n\nThe slideshow:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn JSON ONLY, same shape as before: {"slides": [{"title": "...", "text": "..."}]}. Do not invent any fact.`
-        : `You are ${builder}. The Auditor read your ${noun} and asked for fixes. Fix exactly what it flagged, and nothing else.\n\nThe Auditor's notes:\n${auditText}\nAnalyst checks: ${p.checkText}\nDeterministic checks: ${priceIssues.join("; ")}\n\nThe ${noun}:\n${deliverableText()}\n\nThe facts (only use facts from here):\n${factsText(facts)}\n\nReturn the full corrected ${noun} as HTML, same shape as before. Do not invent any fact. No JavaScript, no external pictures, no forms.`;
-    const fixMaxTokens = jobType === "promo-video" ? 1200 : 4000;
-    if (!withinBudget(OPENAI_MODEL_WORK, fixPrompt, fixMaxTokens)) {
-      return refuse(`The ${noun} would cost more than the $0.50 set aside for it, so it stopped before spending anything.`);
-    }
-    const fixed = await chat({ model: OPENAI_MODEL_WORK, messages: [{ role: "user", content: fixPrompt }], maxTokens: fixMaxTokens });
-    charge(fixed, builder, `Revised the ${noun} once, fixing what the Auditor flagged.`);
-    if (overBudget()) return refuse(`The ${noun} already cost more than the $0.50 set aside for it, so it stopped instead of spending more.`);
-    if (jobType === "promo-video") {
-      const slides = parseSlides(fixed.text);
-      if (!slides) return refuse("The revised slideshow did not come back in a readable shape — try the job again.");
-      p.slides = slides;
-      p.steps[p.steps.length - 1].detail = `${slides.length} slides, revised.`;
-    } else {
-      const rawHtml = sanitizeHtml(extractHtmlDocument(fixed.text));
-      const html = jobType === "flyers" ? pruneUnknownPriceRows(rawHtml, facts) : rawHtml;
-      if (html.length < 120 || !/<(h1|h2)[\s>]/.test(html)) return refuse(`The revised ${noun} did not come back as a finished page — try the job again.`);
-      p.html = html;
-      p.steps[p.steps.length - 1].detail = "Revised once.";
-    }
-    // The revised work gets the same picture back — it was made once.
-    attachImage();
-    p.revisions += 1;
-    return { ...p, stage: upgraded ? CREATIVE_STAGE_CHECK : CREATIVE_STAGE_REAUDIT };
+    return upgraded ? {...p,stage:7,auditText} : revise(auditText);
   }
 
   return p;

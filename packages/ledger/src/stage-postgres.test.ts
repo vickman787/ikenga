@@ -1,0 +1,21 @@
+import { describe, expect, it } from 'vitest';
+import { newDb } from 'pg-mem';
+import { PostgresLedger } from './index.js';
+it('persists claims, reservations and completion through PostgreSQL transitions', async () => {
+    const db = newDb();
+    const { Pool } = db.adapters.createPg();
+    const pool = new Pool();
+    const ledger = new PostgresLedger(pool as never);
+    await ledger.init();
+    await ledger.createOrder({ id: 'leased', jobType: 'website', customerWallet: '0x' + '1'.repeat(40), description: 'Test', status: 'in-progress' });
+    const report = { generatorVersion: 2 as const, report: '', sources: [], steps: [], totalTokens: 0, totalCostUsd: 0, status: 'in-progress' as const, stage: 1, revisions: 0, deliveredAt: '' };
+    await ledger.saveReport('leased', report);
+    expect(await ledger.claimReportStage('leased', 1, 'first')).not.toBeNull();
+    expect(await ledger.claimReportStage('leased', 1, 'second')).toBeNull();
+    await ledger.reserveReportCost('leased', 'first', .1);
+    await ledger.settleReportCost('leased', 'first', .015);
+    const saved = await ledger.completeReportStage('leased', 'first', { ...report, status: 'delivered', stage: 0, report: 'Finished' });
+    expect(saved?.totalCostUsd).toBe(.015);
+    expect((await ledger.getOrder('leased'))?.status).toBe('delivered');
+    await pool.end();
+});

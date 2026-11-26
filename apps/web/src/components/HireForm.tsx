@@ -569,7 +569,7 @@ export default function HireForm() {
             placeholder={DESCRIPTION_PLACEHOLDERS[jobType]}
             style={{ marginTop: 10, width: "100%", resize: "vertical" }}
           />
-          {jobType === "promo-video" && <p className="hint" style={{marginTop:8}}>This service currently delivers an animated slideshow and HTML download. MP4 export is not available yet.</p>}
+          {jobType === "promo-video" && <p className="hint" style={{marginTop:8}}>Your promo includes animated slides and an HTML download. Compatible browsers can also export a silent video as MP4 or WebM.</p>}
         </div>
 
         <div>

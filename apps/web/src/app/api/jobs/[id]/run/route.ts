@@ -5,6 +5,7 @@ import {
   creativeToProgress,
   deliveryStageLabel,
   getHire,
+  getLedger,
   getReport,
   progressToCreative,
   progressToReport,
@@ -76,13 +77,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // Delivered work with a note: a revision, back to the writing stage,
   // reusing the pages Scout already read (or the facts already read).
   if (existing && existing.status === "delivered" && revisionNote) {
+    if(hire.deliverableTxHash)return NextResponse.json({error:"This delivery already has a finalized receipt. Its content must stay unchanged."},{status:409});
     const stored = isReport
       ? progressToReport(revisionProgress(reportToProgress(existing, hire.description), revisionNote))
       : progressToCreative(
           creativeRevisionProgress(creativeToProgress(existing, hire.description, hire.jobType as CreativeJobType), revisionNote),
         );
-    await setReport(id, stored);
-    await setHireStatus(id, "in-progress");
+    const ledger=await getLedger();
+    const started=await ledger.startReportRun(id,stored);
+    if(!started)return NextResponse.json({error:"This job is already running or has no remaining AI budget."},{status:409});
     const job = await getHire(id);
     return NextResponse.json(
       { job, report: stored, nextStage: stored.stage, nextStep: deliveryStageLabel(hire.jobType, stored.stage), done: false },

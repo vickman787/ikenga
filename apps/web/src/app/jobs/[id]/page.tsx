@@ -1,4 +1,5 @@
 "use client";
+import MediaExports from "@/components/MediaExports";
 
 import WalletGate from "@/components/WalletGate";
 import { useEffect, useRef, useState } from "react";
@@ -79,6 +80,7 @@ interface JobDetail {
     stage: number;
     deliverableKind?: "report" | "website" | "flyer" | "slideshow";
     html?: string;
+    designSvg?: string;
     slides?: { title: string; text: string; image?: string }[];
   } | null;
   nextStep: string | null;
@@ -269,6 +271,7 @@ function JobWorkspace() {
         // A failed step must say so in plain words — never surface a
         // JSON parse error when the server answers with an empty body.
         const d = await res.json().catch(() => ({} as { error?: string }));
+        if(res.status===202){await new Promise(resolve=>setTimeout(resolve,2000));continue;}
         if (!res.ok) throw new Error(d.error ?? "The team could not finish this step");
         await reload();
         if (d.done) break;
@@ -575,6 +578,7 @@ function JobWorkspace() {
                       </p>
                       <div style={{ marginTop: 14 }}>
                         <PagePreview jobId={data.job.id} jobType={data.job.jobType} html={data.report.html} />
+                        {data.report.designSvg && <MediaExports svg={data.report.designSvg} />}
                       </div>
                     </>
                   )}
@@ -584,10 +588,11 @@ function JobWorkspace() {
                       <p style={{ marginTop: 8, color: "var(--ink-2)", lineHeight: 1.6 }}>
                         Producer put this together from your brief. It is a
                         motion slideshow — moving slides with your
-                        business&rsquo;s words — not a video file.
+                        business&rsquo;s words. Use the video download below to export a silent video file.
                       </p>
                       <div style={{ marginTop: 14 }}>
                         <Slideshow slides={data.report.slides} />
+                        <MediaExports slides={data.report.slides} />
                       </div>
                       <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
                         <button

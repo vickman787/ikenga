@@ -44,6 +44,7 @@ export interface OpenAIUsage {
 }
 
 export interface OpenAIReply {
+  usageEstimated?: boolean;
   model: string;
   text: string;
   usage: OpenAIUsage;
@@ -137,5 +138,5 @@ export async function chatOpenAI(input: ChatInput, apiKey?: string): Promise<Ope
     promptTokens: promptTokenUpperBound(input.messages.map(m=>m.content).join("\n")), completionTokens: input.maxTokens ?? 1024,
     totalTokens: promptTokenUpperBound(input.messages.map(m=>m.content).join("\n")) + (input.maxTokens ?? 1024),
   };
-  return { model: input.model, text, usage, costUsd: estimateCostUsd(input.model, usage) };
+  return { model: input.model, text, usage, usageEstimated: !valid, costUsd: estimateCostUsd(input.model, usage) };
 }

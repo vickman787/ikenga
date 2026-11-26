@@ -1,25 +1,33 @@
-# AI delivery upgrade: first milestone
+# AI delivery upgrade
 
-Newly started website, flyer, promo slideshow and market-report deliveries use generator version 2. Saved progress without a version resumes using version 1. Version fields and research state are optional fields in the existing delivery JSON; no database or contract migration is required. Historical delivered content and its fingerprint remain unchanged.
+The review branch contains two milestones. Newly started jobs use generator version 2; unversioned saved work keeps its original pipeline. Accepted work, contract addresses, payment approval code and deliverable hash algorithms are unchanged.
 
-## Changes
+## Content and research quality
 
-- Guided service-specific brief fields collect confirmed business/contact/brand information or research subjects, region and purpose. The complete brief is validated before a job is created and the original payment panel receives that confirmed text. USDT and cNGN pricing/funding flows are unchanged.
-- Version 2 creative jobs require validated structured analyst and auditor results. Failed or malformed checks cannot deliver after the correction attempt. A deterministic currency-and-amount check catches unconfirmed prices. Corrected facts are re-extracted for customer-requested revisions. New prompts respect customer branding and add responsive design direction and a trusted viewport tag.
-- Research starts with a persisted plan. Searches run one query per stage; reading runs two pages per stage. Sources must mention planned subjects. Relevant passages, retrieval times and a subject-by-question evidence matrix replace reliance on the opening few characters of a page. Every required cell needs valid source references and passing factual and final audits before delivery.
-- Chat calls reserve the requested output allowance, reject unpriced models, have a bounded timeout, charge empty/truncated responses and conservatively account for missing usage. The hidden retry that doubled output allowance is removed. Explicit brief-parse retries are budget checked.
-- Failed version 2 jobs retain their escrowed state. The owner sees retry/refund controls. Explicit retries carry forward the previous attempt’s recorded model cost. Settled jobs cannot be revised. A stage will not advance a job whose status has changed before the result is saved.
+- Guided briefs collect confirmed business/contact/brand information or research subjects, region and purpose before job creation.
+- Structured analyst and auditor results must pass before delivery. Unsupported prices and currency changes have a deterministic backstop. A second failed audit blocks delivery instead of shipping flagged work.
+- Research saves a plan, performs bounded searches and source reads, extracts relevant passages, records retrieval dates and checks evidence for every subject-by-question cell. A customer correction can trigger a new plan.
+- New flyer designs use a constrained vector renderer. The model supplies headline, descriptive copy and palette; confirmed names, price items and contact information are rendered directly. Text is wrapped or reduced within limits; an overfull design is refused instead of silently clipping facts. The same artwork is embedded in the HTML preview and used for PNG/PDF export.
 
-## Compatibility and limits
+## Processing and spending
 
-Only the website application needs the new generator code; the VPS worker continues invoking the same signed API and sealing the same report/HTML/slideshow content representation. No wallet secrets, contract addresses, payment approval code or hash algorithm are changed.
+- Browser and worker stage requests acquire a shared 150-second lease. PostgreSQL transitions briefly lock the order and delivery rows; no database connection is held while a model is running.
+- Each paid call reserves its allowance in the delivery JSON before the request. Measured results settle to recorded actual cost. Unknown usage and interrupted calls retain conservative allowances; expired leases do not erase them. Stale workers cannot finalize a replacement worker's stage.
+- New starts and customer revision starts are atomic. Retrying cannot reset recorded costs through competing requests. Failed upgraded jobs keep their funded/escrowed status and expose owner retry/refund controls.
+- Version 2 paid work is split into one call per stage, including image generation, correction and report outlining. The existing VPS worker continues calling the same signed API.
+- Spending reservations are application controls, not a provider-side billing limit. In particular image cost reservations use a conservative fixed allowance; if a provider reports a higher actual charge, it is recorded and subsequent spending stops. No system can undo a provider charge already made.
 
-This milestone does not include MP4 encoding, voice/music, PNG/PDF export generation, customer asset uploads, curated layout rendering or screenshot-based visual scoring. The current promo is labelled as an HTML slideshow. Stronger prompts and mocked tests are not a measured real-generation quality benchmark.
+## Exports
 
-Search still uses keyless web result parsing and can be blocked by search providers. Relevance matching is a deterministic first filter; the structured factual audit checks whether evidence supports each claim. A model’s factual assessment is not independent proof of a claim.
+- New flyer designs can be downloaded as PNG and single-page A4 PDF. Rendering happens locally in the owner's browser. Legacy flyers retain their original HTML and print/save-PDF controls.
+- Delivered promo slides can be exported as a silent portrait video locally. The app probes MediaRecorder support and requests MP4 when available; a WebM-only browser is clearly labelled. No camera/microphone permission or additional paid AI generation is involved. Cancellation, hidden-tab interruption and stream cleanup are handled.
+- The original HTML/slides remain the sealed deliverable. Downloads are derived representations; historical work is not regenerated or overwritten.
+- `/examples` exists only in read-only preview builds and contains clearly fictional fixtures for testing export controls without private customer data or payment transactions.
 
-A network timeout can occur after a provider has processed a paid request, and concurrent stage calls are not yet protected by a distributed lease. The accounting improvements cover recorded responses and explicit retries; a production hard spending guarantee needs persisted reservations and stage serialization. Do not treat the per-job estimate as a provider-side billing limit.
+## Verification and remaining rollout checks
 
-## Validation and rollout
+Offline tests cover pipeline compatibility, malformed/failed checks, irrelevant sources, evidence coverage, typed reservations, concurrent claims/start requests, interrupted calls, stale leases, refunds, file structure, text wrapping, format detection and recording cleanup. PostgreSQL transition SQL is exercised using pg-mem; real concurrent database requests should still be exercised in an isolated staging environment.
 
-Use offline fixtures to exercise the complete pipeline, malformed and failed verdicts, irrelevant sources, missing evidence cells, invented prices/currency changes, source extraction after long page prefixes, old saved progress, owner-only routes, refund state changes and both payment currencies. Build all shared packages and the web app. Before enabling this on production, compare representative real outputs and rendered layouts with the current delivery standard under a fixed evaluation budget. Keep old accepted jobs unchanged during evaluation.
+Three flyer fixtures (food, a 12-item tailoring list and professional services) were rasterized and visually inspected. PDFs generated by the application writer were opened and rendered with PDF.js and verified as one A4 page each. They contain synthetic fixture content, not regenerated customer work.
+
+Browser video encoding is tested with a recorder stub, not an actual hardware encoder. The interactive preview needs a final real-browser check: download/open the MP4 or WebM, verify complete captions and pictures, cancel an export, hide the tab during recording, and check PNG/PDF on mobile. The preview does not contain live paid jobs. Real model output comparisons, website screenshot review, optional audio/voice and additional design families remain before production rollout. No paid model/image generation or financial transaction has been performed during implementation.

@@ -33,8 +33,10 @@ describe('Version 2 delivery gates',()=>{
   expect(revised.generatorVersion).toBe(2);expect(revised.stage).toBe(1);expect(revised.facts).toBeNull();
  });
  it('accounts for an empty reply once instead of silently doubling the paid call',async()=>{
-  let calls=0;const result=await runCreativeStage({...creative(),stage:CREATIVE_STAGE_AUDIT,revisions:0},{chat:async()=>{calls++;return reply('');}});
-  // First empty audit enters the single correction; empty correction refuses.
+  let calls=0;const deps={chat:async()=>{calls++;return reply('');}};
+  const first=await runCreativeStage({...creative(),stage:CREATIVE_STAGE_AUDIT,revisions:0},deps);
+  expect(first.stage).toBe(7);expect(calls).toBe(1);
+  const result=await runCreativeStage(first,deps);
   expect(result.status).toBe('refused');expect(calls).toBe(2);expect(result.totalCostUsd).toBe(.002);
  });
  it('uses the actual output allowance for the budget check before an audit',async()=>{
@@ -121,3 +123,11 @@ it('replans changed research requirements and preserves previous spending on rev
 it('preserves the total cost across a customer creative revision',()=>{
  expect(creativeRevisionProgress({...creative(),totalCostUsd:.1},'Correct the phone').totalCostUsd).toBe(.1);
 });
+
+it('builds and checks a new flyer through separate paid stages and exports the same artwork',async()=>{
+ let state={...emptyCreativeProgress('Ada sells Rice for ₦2500. Call 08031234567.','flyers'),generatorVersion:2 as const};let callsThisStage=0;
+ const chat=async(input:{responseSchema?:{name:string}})=>{callsThisStage++;if(input.responseSchema?.name==='creative_facts')return reply(JSON.stringify(facts));if(input.responseSchema?.name==='flyer_design')return reply(JSON.stringify({headline:'Rice for your day',subheading:'Food shop',details:'',accent:'#742F3E',background:'#FFF8EE'}));return reply(pass);};
+ let stages=0;while(state.status==='in-progress'&&stages++<12){callsThisStage=0;state=await runCreativeStage(state,{chat}) as typeof state;expect(callsThisStage).toBeLessThanOrEqual(1);}
+ expect(state.status).toBe('delivered');expect(state.designSvg).toContain('₦2500');expect(state.html).toContain(state.designSvg);expect(state.html).toContain(facts.contact);
+});
+

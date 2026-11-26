@@ -36,6 +36,7 @@ export {
   resolveOpenAIKey,
   estimateCostUsd,
   worstCaseCostUsd,
+  promptTokenUpperBound,
   OPENAI_BASE_URL,
   OPENAI_MODEL_WORK,
   OPENAI_MODEL_AUDIT,

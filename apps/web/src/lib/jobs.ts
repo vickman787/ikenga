@@ -694,15 +694,9 @@ export async function startFreshRun(id: string): Promise<StartFreshRunResult> {
     });
   }
 
-  await setHireStatus(id, "in-progress");
-  const stored = isReport ? emptyStoredReport() : emptyStoredCreative(hire.jobType);
-  const previous = await getReport(id);
-  if (previous?.generatorVersion === 2 && previous.status === "refused") {
-    stored.totalCostUsd = previous.totalCostUsd;
-    stored.totalTokens = previous.totalTokens;
-    stored.steps = [...previous.steps];
-  }
-  await setReport(id, stored);
+  const initial = isReport ? emptyStoredReport() : emptyStoredCreative(hire.jobType);
+  const stored=await ledger.startReportRun(id,initial);
+  if(!stored)return {ok:false,status:409,error:'This job is already running or has no remaining AI budget. Refresh the page to see its current status.'};
   const job = await getHire(id);
   return {
     ok: true,
@@ -716,6 +710,8 @@ export async function startFreshRun(id: string): Promise<StartFreshRunResult> {
 /** A saved creative delivery as the staged runner's progress (the brief comes from the hire). */
 export function creativeToProgress(report: StoredReport, brief: string, jobType: CreativeJobType): CreativeProgress {
   return {
+    auditText: report.auditText,
+    designSvg: report.designSvg,
     generatorVersion: report.generatorVersion ?? 1,
     stage: report.stage,
     jobType,
@@ -739,6 +735,8 @@ export function creativeToProgress(report: StoredReport, brief: string, jobType:
 /** The staged runner's progress as a saved creative delivery. */
 export function progressToCreative(progress: CreativeProgress): StoredReport {
   return {
+    auditText: progress.auditText,
+    designSvg: progress.designSvg,
     generatorVersion: progress.generatorVersion,
     report: "",
     sources: [],
