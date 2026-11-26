@@ -10,7 +10,7 @@ import {
   fundBillTransfer,
   readTokenBalance,
 } from "@/lib/contracts";
-import { formatUsdtDollars, usdtDecimalToAtomic } from "@/lib/usdt";
+import { billFundingView, formatBillUsdt } from "@/lib/billFunding";
 
 /**
  * One bill's page — where it stands, and the receipts.
@@ -148,6 +148,14 @@ export default function BillPage() {
     setPayError("");
     setPayStatus("connecting");
     try {
+      // Recheck before asking for a signature: polling or another tab may have changed the bill.
+      const latestResponse = await fetch(`/api/bills/${id}`, { cache: "no-store" });
+      const latest = await latestResponse.json() as BillDetail;
+      if (!latestResponse.ok || !latest.bill) throw new Error("Could not confirm the bill's latest funding requirement. Refresh and try again.");
+      setData(latest);
+      const current = billFundingView(latest.bill);
+      if (!current.canPay) throw new Error(current.waitingForTargetRate ? "Your payment is recorded. We are waiting for your target rate before requesting any additional funding." : "No additional payment is needed right now.");
+      if (current.remainingAtomic !== remainingAtomic) throw new Error("The quote changed. Review the updated amount before confirming a payment.");
       const chain = await fetchChainConfig();
       const account = await connectInjected();
       await ensureChain(chain.chainId);
@@ -155,7 +163,7 @@ export default function BillPage() {
       const balance = await readTokenBalance(chain, account);
       if (balance < remainingAtomic) {
         throw new Error(
-          `Your wallet holds ${formatUsdtDollars(balance.toString())} USDT — you need ${formatUsdtDollars(remainingAtomic)} for this bill. Add USDT first, then try again.`,
+          `Your wallet holds ${formatBillUsdt(balance)} USDT — you need ${formatBillUsdt(remainingAtomic)} for this bill. Add USDT first, then try again.`,
         );
       }
       setPayStatus("paying");
@@ -198,10 +206,8 @@ export default function BillPage() {
   }
 
   const bill = data?.bill;
-  const paidAtomic = bill?.fundingPaidUsdtAtomic ? BigInt(bill.fundingPaidUsdtAtomic) : 0n;
-  const neededAtomic = bill?.fundingNeededUsdt ? usdtDecimalToAtomic(bill.fundingNeededUsdt) : null;
-  const remainingAtomic = neededAtomic !== null && neededAtomic > paidAtomic ? neededAtomic - paidAtomic : 0n;
-  const billOpen = bill?.status !== "paid" && bill?.status !== "failed";
+  const { paidAtomic, neededAtomic, remainingAtomic, waitingForTargetRate, canPay } = billFundingView(bill);
+  const billOpen = bill?.status === "created" || bill?.status === "watching";
   const payBusy = payStatus !== "idle" && payStatus !== "done";
   const payStatusWords: Record<string, string> = {
     connecting: "Connecting your wallet…",
@@ -215,10 +221,10 @@ export default function BillPage() {
     created: "We have your bill. The next check runs every few minutes — it looks at the rate and at the USDT in the agent wallet.",
     watching: paidAtomic > 0n && neededAtomic !== null &&
       (bill?.note?.startsWith("To pay this bill we need") || bill?.note?.startsWith("You paid $"))
-      ? remainingAtomic > 0n
-        ? `Payment received — ${formatUsdtDollars(remainingAtomic)} USDT more is needed at the latest rate.`
-        : bill.lastRate !== null && bill.lastRate < bill.minRate
-          ? "Payment received — waiting for your target rate."
+      ? waitingForTargetRate
+        ? "Payment received — waiting for your target rate."
+        : remainingAtomic > 0n
+          ? `Payment received — ${formatBillUsdt(remainingAtomic)} USDT more is needed at the latest rate.`
           : "Payment received — waiting for the next processing check."
       : bill?.note ?? "Watching the rate. Nothing has moved yet.",
     converting: "The money is being changed and paid — the cNGN is on its way to your supplier.",
@@ -283,7 +289,7 @@ export default function BillPage() {
               )}
               {billOpen && neededAtomic !== null && remainingAtomic === 0n && paidAtomic > 0n && (
                 <p>
-                  <b>You paid {formatUsdtDollars(paidAtomic)} USDT</b> — the money is in the agent wallet and we are watching the rate.
+                  <b>You paid {formatBillUsdt(paidAtomic)} USDT</b> — the money is in the agent wallet and we are watching the rate.
                   {bill.fundingPayerWallet && (
                     <> It came from <span className="mono" style={{ fontSize: 13 }}>{shortAddress(bill.fundingPayerWallet)}</span>.</>
                   )}
@@ -294,11 +300,12 @@ export default function BillPage() {
                   <p>
                     <b>
                       {paidAtomic > 0n
-                        ? `You paid ${formatUsdtDollars(paidAtomic)} USDT — ${formatUsdtDollars(remainingAtomic)} more to go.`
-                        : `To pay this bill we need ${formatUsdtDollars(remainingAtomic)} USDT.`}
+                        ? `You paid ${formatBillUsdt(paidAtomic)} USDT — the current quote is ${formatBillUsdt(remainingAtomic)} higher.`
+                        : `To pay this bill we need ${formatBillUsdt(remainingAtomic)} USDT.`}
                     </b>{" "}
-                    Pay it from your own Celo wallet — you need USDT in your wallet, plus a little CELO for gas. The money goes to the agent
-                    wallet:
+                    {waitingForTargetRate
+                      ? "The rate is below your minimum. We will recheck the quote before requesting a top-up; you do not need to send more while we wait."
+                      : "Pay from your own Celo wallet. You need USDT and a little CELO for gas. The payment goes to the agent wallet:"}
                   </p>
                   <p className="mono" style={{ fontSize: 13, wordBreak: "break-all", marginTop: 8 }}>
                     {agentWallet ?? "Loading the agent wallet…"}
@@ -313,7 +320,7 @@ export default function BillPage() {
                   <button
                     type="button"
                     onClick={() => handlePay(remainingAtomic)}
-                    disabled={payBusy}
+                    disabled={payBusy || !canPay}
                     style={{
                       marginTop: 12,
                       padding: "12px 20px",
@@ -323,13 +330,13 @@ export default function BillPage() {
                       color: "#fff",
                       fontSize: 16,
                       fontWeight: 600,
-                      cursor: payBusy ? "wait" : "pointer",
-                      opacity: payBusy ? 0.7 : 1,
+                      cursor: payBusy ? "wait" : !canPay ? "not-allowed" : "pointer",
+                      opacity: payBusy || !canPay ? 0.7 : 1,
                     }}
                   >
-                    {payStatus === "idle" || payStatus === "done"
-                      ? `Pay ${formatUsdtDollars(remainingAtomic)} USDT from my wallet`
-                      : payStatusWords[payStatus]}
+                    {payBusy ? payStatusWords[payStatus] : !canPay
+                      ? waitingForTargetRate ? "Waiting for your target rate" : "No payment needed"
+                      : paidAtomic > 0n ? `Top up ${formatBillUsdt(remainingAtomic)} USDT` : `Pay ${formatBillUsdt(remainingAtomic)} USDT from my wallet`}
                   </button>
                   {payStatus === "done" && (
                     <p style={{ marginTop: 8 }}><b>Paid.</b> The money is in the agent wallet — we are watching the rate.</p>
@@ -350,7 +357,7 @@ export default function BillPage() {
                   {manualOpen && (
                     <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
                       <p style={{ fontSize: 14, color: "var(--ink-2)" }}>
-                        Send exactly {formatUsdtDollars(remainingAtomic)} USDT to the agent wallet above, then paste the transaction hash here.
+                        {waitingForTargetRate ? "Only report a transfer you already sent. Do not send a new top-up while we wait for your target rate." : <>Send exactly {formatBillUsdt(remainingAtomic)} USDT to the agent wallet above, then paste the transaction hash here.</>}
                         We check it onchain before recording it for this bill.
                       </p>
                       <input
