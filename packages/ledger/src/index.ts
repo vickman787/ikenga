@@ -213,6 +213,8 @@ export interface LedgerBill {
   deadline: string;
   /** Lowest rate the payer will accept, cNGN per 1 USDT. */
   minRate: number;
+  /** True when the payer chose to pay at the current rate instead of waiting for a target rate. The stored minRate is then the rate seen when the bill was sent, for the receipt — the worker never waits on it. */
+  payNow: boolean;
   status: BillStatus;
   /** Plain-words note on where the bill stands (funding needed, rate too low, …). Null until checked. */
   note: string | null;
@@ -787,9 +789,9 @@ export class PostgresLedger implements Ledger {
     bill: Omit<LedgerBill, "status" | "note" | "lastCheckedAt" | "lastRate" | "lastRateAt" | "lastDecision" | "lastDecisionReason" | "lastBpsGap" | "lastNairaSaved" | "fundingNeededUsdt" | "fundingReady" | "fundingPayerWallet" | "fundingTxHashes" | "fundingPaidUsdtAtomic" | "rfqId" | "approvalTxHashes" | "swapTxHash" | "forced" | "payoutTxHash" | "createdAt" | "updatedAt">,
   ): Promise<LedgerBill> {
     const { rows } = await this.pool.query(
-      `INSERT INTO bills (id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'created') RETURNING ${BILL_COLS}`,
-      [bill.id, bill.payerName, bill.purpose, bill.amountNgn, bill.supplierWallet, bill.deadline, bill.minRate],
+      `INSERT INTO bills (id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, pay_now, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'created') RETURNING ${BILL_COLS}`,
+      [bill.id, bill.payerName, bill.purpose, bill.amountNgn, bill.supplierWallet, bill.deadline, bill.minRate, bill.payNow],
     );
     return rowToBill(rows[0]);
   }
@@ -890,7 +892,7 @@ export class PostgresLedger implements Ledger {
 
 /** Every column of the bills table, in one place. */
 const BILL_COLS =
-  "id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, status, note, last_checked_at, last_rate, last_rate_at, last_decision, last_decision_reason, last_bps_gap, last_naira_saved, funding_needed_usdt, funding_ready, funding_payer_wallet, funding_tx_hashes, funding_paid_usdt_atomic, rfq_id, approval_tx_hashes, swap_tx_hash, forced, payout_tx_hash, created_at, updated_at";
+  "id, payer_name, purpose, amount_ngn, supplier_wallet, deadline, min_rate, pay_now, status, note, last_checked_at, last_rate, last_rate_at, last_decision, last_decision_reason, last_bps_gap, last_naira_saved, funding_needed_usdt, funding_ready, funding_payer_wallet, funding_tx_hashes, funding_paid_usdt_atomic, rfq_id, approval_tx_hashes, swap_tx_hash, forced, payout_tx_hash, created_at, updated_at";
 
 function rowToBill(r: Record<string, unknown>): LedgerBill {
   return {
@@ -901,6 +903,7 @@ function rowToBill(r: Record<string, unknown>): LedgerBill {
     supplierWallet: String(r.supplier_wallet),
     deadline: r.deadline instanceof Date ? r.deadline.toISOString() : String(r.deadline),
     minRate: Number(r.min_rate),
+    payNow: Boolean(r.pay_now),
     status: String(r.status) as LedgerBill["status"],
     note: r.note === null || r.note === undefined ? null : String(r.note),
     lastCheckedAt: r.last_checked_at instanceof Date ? r.last_checked_at.toISOString() : r.last_checked_at ? String(r.last_checked_at) : null,

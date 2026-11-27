@@ -56,6 +56,7 @@ function fakeBill(overrides: Partial<SiteBill> = {}): SiteBill {
     supplierWallet: SUPPLIER,
     deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     minRate: 1400,
+    payNow: false,
     status: "created",
     note: null,
     lastDecision: null,
@@ -294,6 +295,21 @@ describe("processBills", () => {
     const second = await processBills([fundedBill({ lastDecision: "refuse", fundingPaidUsdtAtomic: "4000000" })], rt, 10);
     expect(second.refused).toBe(1);
     expect(state.updates.filter((u) => u.update.event?.kind === "refuse")).toHaveLength(1);
+  });
+
+  it("a pay-now bill converts below its recorded rate — the payer already chose the current rate", async () => {
+    const { rt, state } = fakeRuntime({
+      previewRate: { buyAmount: "5000000000", takerPays: "4000000" }, // rate 1250 < 2000 recorded
+      firmRate: { buyAmount: "5000000000", takerPays: "4000000" },
+    });
+    const bill = fundedBill({ payNow: true, minRate: 2000, fundingPaidUsdtAtomic: "4000000" });
+    const res = await processBills([bill], rt, 10);
+    expect(res.paid).toBe(1);
+    expect(res.refused).toBe(0);
+    expect(state.firmQuotes).toBe(1);
+    const swapUpdate = state.updates.find((u) => u.update.event?.kind === "swap");
+    expect(swapUpdate?.update.event?.reason).toMatch(/current rate as the payer chose/);
+    expect(swapUpdate?.update.patch).toMatchObject({ forced: false });
   });
 
   it("converts at a good rate: approval tagged, swap raw, payout tagged with the tag on it", async () => {

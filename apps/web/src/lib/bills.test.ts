@@ -57,6 +57,11 @@ describe("BillInputSchema", () => {
     expect(() => BillInputSchema.parse({ ...VALID, purpose: "" })).toThrow();
     expect(() => BillInputSchema.parse({ ...VALID, minRate: 0 })).toThrow(/lowest rate/);
   });
+
+  it("accepts a pay-now bill and defaults to waiting for a rate", () => {
+    expect(BillInputSchema.parse({ ...VALID, payNow: true })).toMatchObject({ payNow: true, minRate: 1400 });
+    expect(BillInputSchema.parse(VALID).payNow).toBe(false);
+  });
 });
 
 describe("createBill / getBill / listBills", () => {
@@ -64,6 +69,7 @@ describe("createBill / getBill / listBills", () => {
     const bill = await createBill(VALID);
     expect(bill.id.startsWith("bill_")).toBe(true);
     expect(bill.status).toBe("created");
+    expect(bill.payNow).toBe(false);
     expect(bill.fundingReady).toBeNull();
     expect(bill.approvalTxHashes).toEqual([]);
     expect((await getBill(bill.id))?.purpose).toBe("Rice for the shop");

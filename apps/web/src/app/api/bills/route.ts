@@ -7,7 +7,7 @@ export async function GET() {
   return NextResponse.json({
     bills: [...bills].reverse(),
     backend: ledgerBackend(),
-    note: "A naira bill is one person owing a supplier in naira. Ikenga changes USDT to cNGN and pays the supplier — only at the rate the payer named, or at the deadline. Nothing moves until the agent wallet holds the USDT for it.",
+    note: "A naira bill is one person owing a supplier in naira. Ikenga changes USDT to cNGN and pays the supplier — only at the rate the payer named, at the current rate when they chose pay-now, or at the deadline. Nothing moves until the agent wallet holds the USDT for it.",
   });
 }
 

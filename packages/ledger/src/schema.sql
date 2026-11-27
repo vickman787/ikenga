@@ -189,6 +189,10 @@ ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_payer_wallet TEXT;
 ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_tx_hashes TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_paid_usdt_atomic TEXT;
 
+-- Pay-now bills: the payer chose the current rate instead of a target
+-- rate. Added with IF NOT EXISTS so old databases pick it up on init.
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS pay_now BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- One hash-chained receipt per bill event — the same chaining as the CFO
 -- decision log, so a bill's history can't be rewritten silently.
 CREATE TABLE IF NOT EXISTS bill_events (

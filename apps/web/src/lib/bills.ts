@@ -55,6 +55,8 @@ export const BillInputSchema = z.object({
     .finite("Enter a rate per dollar")
     .gt(0, "Enter the lowest rate per dollar you will accept")
     .lte(100_000, "That rate looks wrong — check it and try again"),
+  /** True when the payer chose to pay at the current rate instead of waiting for a target rate. The minRate sent with it is the rate seen when the bill was sent, for the receipt — the worker never waits on it. */
+  payNow: z.boolean().default(false),
 });
 export type BillInput = z.infer<typeof BillInputSchema>;
 
@@ -109,6 +111,8 @@ export interface BillResult {
   supplierWallet: string;
   deadline: string;
   minRate: number;
+  /** True when the payer chose to pay at the current rate instead of waiting for a target rate. */
+  payNow: boolean;
   status: LedgerBill["status"];
   note: string | null;
   lastCheckedAt: string | null;
@@ -146,6 +150,7 @@ export function billToResult(b: LedgerBill): BillResult {
     supplierWallet: b.supplierWallet,
     deadline: b.deadline,
     minRate: b.minRate,
+    payNow: b.payNow,
     status: b.status,
     note: b.note,
     lastCheckedAt: b.lastCheckedAt,
@@ -181,7 +186,7 @@ export function formatRate(rate: number): string {
   return `₦${rate.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per $1`;
 }
 
-export async function createBill(input: BillInput): Promise<BillResult> {
+export async function createBill(input: z.input<typeof BillInputSchema>): Promise<BillResult> {
   const parsed = BillInputSchema.parse(input);
   const id = `bill_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const ledger = await getLedger();
@@ -194,12 +199,13 @@ export async function createBill(input: BillInput): Promise<BillResult> {
     supplierWallet: parsed.supplierWallet,
     deadline: new Date(parsed.deadline).toISOString(),
     minRate: parsed.minRate,
+    payNow: parsed.payNow,
   });
   await ledger.appendBillEvent({
     id: `bev_${id}`,
     billId: id,
     kind: "created",
-    reason: `Bill submitted: ${formatNaira(parsed.amountNgn)} for ${parsed.purpose}.`,
+    reason: `Bill submitted: ${formatNaira(parsed.amountNgn)} for ${parsed.purpose}${parsed.payNow ? " — pay now at the current rate." : "."}`,
     rateSeen: null,
     bpsGap: null,
     txHash: null,

@@ -6,6 +6,8 @@ interface FundingBill {
   fundingNeededUsdt: string | null;
   lastRate: number | null;
   minRate: number;
+  /** True when the payer chose to pay at the current rate instead of waiting for a target rate — there is no target rate to wait for. */
+  payNow: boolean;
   deadline: string;
 }
 /** Exact six-decimal token amounts for payment controls, with at least two decimals. */
@@ -20,7 +22,7 @@ export function billFundingView(bill: FundingBill | undefined, now = Date.now())
   const neededAtomic = bill?.fundingNeededUsdt ? usdtDecimalToAtomic(bill.fundingNeededUsdt) : null;
   const remainingAtomic = neededAtomic !== null && neededAtomic > paidAtomic ? neededAtomic - paidAtomic : 0n;
   const fundingStage = bill?.status === "created" || bill?.status === "watching";
-  const waitingForTargetRate = paidAtomic > 0n && fundingStage && bill.lastRate !== null &&
+  const waitingForTargetRate = !bill?.payNow && paidAtomic > 0n && fundingStage && bill.lastRate !== null &&
     bill.lastRate < bill.minRate && now < Date.parse(bill.deadline);
   const canPay = fundingStage && remainingAtomic > 0n && !waitingForTargetRate;
   return { paidAtomic, neededAtomic, remainingAtomic, waitingForTargetRate, canPay };

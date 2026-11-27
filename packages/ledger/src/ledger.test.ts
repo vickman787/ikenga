@@ -371,6 +371,7 @@ const BILL_INPUT = {
   supplierWallet: "0x00000000000000000000000000000000000000aa",
   deadline: "2026-12-07T09:00:00.000Z",
   minRate: 1400,
+  payNow: false,
 };
 
 describe("bills (MemoryLedger)", () => {
@@ -378,6 +379,7 @@ describe("bills (MemoryLedger)", () => {
     const ledger = new MemoryLedger();
     const bill = await ledger.createBill(BILL_INPUT);
     expect(bill.status).toBe("created");
+    expect(bill.payNow).toBe(false);
     expect(bill.approvalTxHashes).toEqual([]);
     expect(bill.fundingPayerWallet).toBeNull();
     expect(bill.fundingTxHashes).toEqual([]);
@@ -418,6 +420,13 @@ describe("bills (MemoryLedger)", () => {
     expect(await ledger.verifyBillChain(bill.id)).toBe(true);
     expect(await ledger.getBill("missing")).toBeNull();
     expect((await ledger.listBills()).map((b) => b.id)).toEqual(["bill_test_1"]);
+  });
+
+  it("round-trips a pay-now bill with its mode", async () => {
+    const ledger = new MemoryLedger();
+    const bill = await ledger.createBill({ ...BILL_INPUT, id: "bill_paynow_1", payNow: true });
+    expect(bill.payNow).toBe(true);
+    expect((await ledger.getBill("bill_paynow_1"))?.payNow).toBe(true);
   });
 });
 

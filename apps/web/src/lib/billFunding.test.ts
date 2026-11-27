@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { billFundingView, formatBillUsdt } from "./billFunding";
 const now = Date.parse("2026-11-26T00:00:00Z");
-const bill = { status: "watching" as const, fundingPaidUsdtAtomic: "1041833", fundingNeededUsdt: "1.041907", lastRate: 1439.67, minRate: 1444, deadline: "2026-11-27T23:59:59Z" };
+const bill = { status: "watching" as const, fundingPaidUsdtAtomic: "1041833", fundingNeededUsdt: "1.041907", lastRate: 1439.67, minRate: 1444, payNow: false, deadline: "2026-11-27T23:59:59Z" };
 describe("bill funding payment controls", () => {
   it("preserves the real sub-cent shortfall but defers a top-up below the target rate", () => {
     const view = billFundingView(bill, now);
@@ -9,6 +9,11 @@ describe("bill funding payment controls", () => {
     expect(formatBillUsdt(view.remainingAtomic)).toBe("$0.000074");
     expect(view.waitingForTargetRate).toBe(true);
     expect(view.canPay).toBe(false);
+  });
+  it("never waits for a target rate on a pay-now bill — the payer already chose the current rate", () => {
+    const view = billFundingView({ ...bill, payNow: true }, now);
+    expect(view.waitingForTargetRate).toBe(false);
+    expect(view.canPay).toBe(true);
   });
   it("never enables another payment for an exactly funded or overfunded bill", () => {
     for (const paid of ["1041907", "2000000"]) {
