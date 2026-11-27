@@ -297,21 +297,6 @@ describe("processBills", () => {
     expect(state.updates.filter((u) => u.update.event?.kind === "refuse")).toHaveLength(1);
   });
 
-  it("a pay-now bill converts below its recorded rate — the payer already chose the current rate", async () => {
-    const { rt, state } = fakeRuntime({
-      previewRate: { buyAmount: "5000000000", takerPays: "4000000" }, // rate 1250 < 2000 recorded
-      firmRate: { buyAmount: "5000000000", takerPays: "4000000" },
-    });
-    const bill = fundedBill({ payNow: true, minRate: 2000, fundingPaidUsdtAtomic: "4000000" });
-    const res = await processBills([bill], rt, 10);
-    expect(res.paid).toBe(1);
-    expect(res.refused).toBe(0);
-    expect(state.firmQuotes).toBe(1);
-    const swapUpdate = state.updates.find((u) => u.update.event?.kind === "swap");
-    expect(swapUpdate?.update.event?.reason).toMatch(/current rate as the payer chose/);
-    expect(swapUpdate?.update.patch).toMatchObject({ forced: false });
-  });
-
   it("converts at a good rate: approval tagged, swap raw, payout tagged with the tag on it", async () => {
     const { rt, state } = fakeRuntime();
     const res = await processBills([fundedBill()], rt, 10);
@@ -451,5 +436,35 @@ describe("Investigator checks in the bill pipeline", () => {
     expect(state.updates.some((u) => u.update.event?.kind === "payout")).toBe(false);
     const failed = state.updates.find((u) => u.update.event?.kind === "failed");
     expect(String(failed?.update.event?.reason)).toContain("zero address");
+  });
+});
+
+describe("bill rate preferences and firm funding", () => {
+  it("keeps the accepted floor for a Muse pay-now bill when the live quote has moved down", async () => {
+    const { rt, state } = fakeRuntime({
+      firmRate: { buyAmount: "5000000000", takerPays: "4000000" },
+    });
+    const result = await processBills([fundedBill({ payNow: true, minRate: 1400, fundingPaidUsdtAtomic: "4000000" })], rt, 10);
+    expect(result.refused).toBe(1);
+    expect(state.cancels).toEqual(["rfq_test_1"]);
+    expect(state.raw).toHaveLength(0);
+  });
+  it("does not force a protected bill below minimum after its deadline", async () => {
+    const { rt, state } = fakeRuntime();
+    const result = await processBills([fundedBill({ minRate: 1500, deadline: new Date(Date.now() - 1000).toISOString(), deadlinePolicy: "keep_waiting" })], rt, 10);
+    expect(result.refused).toBe(1); expect(state.firmQuotes).toBe(0);
+    expect(state.raw).toHaveLength(0); expect(state.tagged).toHaveLength(0);
+  });
+  it("rechecks a firm rate against the protected minimum", async () => {
+    const { rt, state } = fakeRuntime({ firmRate: { buyAmount: "5000000000", takerPays: "4000000" } });
+    await processBills([fundedBill({ deadline: new Date(Date.now() - 1000).toISOString(), deadlinePolicy: "keep_waiting" })], rt, 10);
+    expect(state.cancels).toEqual(["rfq_test_1"]); expect(state.raw).toHaveLength(0);
+  });
+  it("never covers a higher firm cost with another bill's funds", async () => {
+    const { rt, state } = fakeRuntime({ firmRate: { buyAmount: "5000000000", takerPays: "3500000" } });
+    const result = await processBills([fundedBill()], rt, 10);
+    expect(result.waiting).toBe(1); expect(state.cancels).toEqual(["rfq_test_1"]);
+    expect(state.raw).toHaveLength(0); expect(state.tagged).toHaveLength(0);
+    expect(state.updates.at(-1)?.update.patch).toMatchObject({ fundingNeededUsdt: "3.5", fundingReady: false });
   });
 });

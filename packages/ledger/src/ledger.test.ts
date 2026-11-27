@@ -371,7 +371,6 @@ const BILL_INPUT = {
   supplierWallet: "0x00000000000000000000000000000000000000aa",
   deadline: "2026-12-07T09:00:00.000Z",
   minRate: 1400,
-  payNow: false,
 };
 
 describe("bills (MemoryLedger)", () => {
@@ -379,7 +378,6 @@ describe("bills (MemoryLedger)", () => {
     const ledger = new MemoryLedger();
     const bill = await ledger.createBill(BILL_INPUT);
     expect(bill.status).toBe("created");
-    expect(bill.payNow).toBe(false);
     expect(bill.approvalTxHashes).toEqual([]);
     expect(bill.fundingPayerWallet).toBeNull();
     expect(bill.fundingTxHashes).toEqual([]);
@@ -421,13 +419,6 @@ describe("bills (MemoryLedger)", () => {
     expect(await ledger.getBill("missing")).toBeNull();
     expect((await ledger.listBills()).map((b) => b.id)).toEqual(["bill_test_1"]);
   });
-
-  it("round-trips a pay-now bill with its mode", async () => {
-    const ledger = new MemoryLedger();
-    const bill = await ledger.createBill({ ...BILL_INPUT, id: "bill_paynow_1", payNow: true });
-    expect(bill.payNow).toBe(true);
-    expect((await ledger.getBill("bill_paynow_1"))?.payNow).toBe(true);
-  });
 });
 
 describe("bills (PostgresLedger, pg-mem)", () => {
@@ -464,4 +455,18 @@ describe("bills (PostgresLedger, pg-mem)", () => {
     expect(await ledger.verifyBillChain(bill.id)).toBe(false);
     await pool.end();
   });
+});
+
+it("upgrades old bill rows without changing their deadline rule", async () => {
+  const db = newDb(); const { Pool } = db.adapters.createPg(); const pool = new Pool();
+  const ledger = new PostgresLedger(pool as never); await ledger.init();
+  await ledger.createBill({ ...BILL_INPUT, id: "legacy_bill" });
+  await pool.query("ALTER TABLE bills DROP COLUMN rate_mode");
+  await pool.query("ALTER TABLE bills DROP COLUMN deadline_policy");
+  const migration = (await import("node:fs")).readFileSync(new URL("./schema.sql", import.meta.url), "utf8").split("-- Additive preferences; defaults preserve existing bills.")[1];
+  await pool.query(migration);
+  expect(await ledger.getBill("legacy_bill")).toMatchObject({ minRate: 1400, rateMode: "target", deadlinePolicy: "pay_at_deadline" });
+  const bill = await ledger.createBill({ ...BILL_INPUT, id: "protected_bill", rateMode: "current", deadlinePolicy: "keep_waiting" });
+  expect(await ledger.getBill(bill.id)).toMatchObject({ rateMode: "current", deadlinePolicy: "keep_waiting" });
+  await pool.end();
 });

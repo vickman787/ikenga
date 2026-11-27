@@ -24,15 +24,10 @@ import { getChainConfig } from "@/lib/jobs";
  * called the Textile reactor; a payout hash must have succeeded and
  * called the cNGN token; an approval hash must have succeeded and called
  * USDT. A funding hash must have succeeded onchain as a USDT transfer
- * from the payer's wallet to the agent wallet, for the amount reported —
- * and it must not already be recorded on another bill. When the transfer
- * is for a different amount than reported (the quote moved between the
- * payer sending and reporting, or the payer rounded up), it is recorded
- * at its actual onchain amount instead of refused, so money already in
- * the agent wallet is never stranded on a bill that still needs it. A
- * hash that fails those checks is refused with 400. Re-posting a hash
- * already recorded is a no-op — the worker and the payer's browser
- * retry safely.
+ * from the payer's wallet to the agent wallet, for exactly the amount
+ * reported — and it must not already be recorded on another bill. A hash
+ * that fails those checks is refused with 400. Re-posting a hash already
+ * recorded is a no-op — the worker and the payer's browser retry safely.
  *
  * Bills run on Celo mainnet only (there is no Celo testnet corridor), so
  * this route refuses to record anything while the site runs on another chain.
@@ -98,34 +93,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       );
     }
     if (!check.ok) {
-      // The page reports the amount it computed as still needed — but
-      // the quote moves between the payer sending and reporting, and a
-      // payer may round up. When the transfer is otherwise valid
-      // (USDT, right payer, right recipient, succeeded) and we know
-      // its actual onchain amount, record that amount instead of
-      // refusing: the money is already in the agent wallet, and
-      // refusing it would strand it on a bill that still needs it.
-      if (
-        check.reason === "wrong amount" &&
-        check.recipient?.toLowerCase() === config.agentWallet.toLowerCase() &&
-        check.amountAtomic !== null &&
-        check.amountAtomic > 0n
-      ) {
-        try {
-          const funded = await recordBillFunding(id, {
-            ...funding,
-            amountAtomic: check.amountAtomic.toString(),
-          });
-          if (!parsed.data.patch && !parsed.data.event) {
-            return NextResponse.json({ bill: funded });
-          }
-        } catch (err) {
-          return NextResponse.json(
-            { error: err instanceof Error ? err.message : "Could not record the funding payment." },
-            { status: 400 },
-          );
-        }
-      }
       return NextResponse.json(
         { error: FUNDING_REASONS[check.reason ?? ""] ?? "That funding payment didn't check out onchain — check the transaction hash and try again." },
         { status: 400 },
