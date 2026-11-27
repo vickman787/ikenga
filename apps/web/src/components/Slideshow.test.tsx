@@ -15,8 +15,10 @@ describe("Slideshow — the promo video", () => {
     expect(html).toContain("Real food from Ada&#x27;s Kitchen");
     expect(html).toContain("Home cooking in Lekki");
     expect(html).toContain(`<img src="${FAKE_IMG}"`);
-    expect(html).toContain("Slide 1 of 2");
-    expect(html).toContain("Pause");
+    expect(html).toContain('aria-label="Promo scene 1 of 2"');
+    expect(html).toContain('aria-label="Play promo"');
+    expect(html).toContain("1 of 2 scenes");
+    expect(html).toContain('aria-label="Next promo scene"');
   });
 
   it("shows no picture when the job has none", () => {
