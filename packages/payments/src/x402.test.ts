@@ -21,8 +21,7 @@
  *
  * No test here spends money, signs a real payment, or needs an API key.
  */
-import { createServer, type Server } from "node:http";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { afterEach, describe, expect, it, beforeEach, vi } from "vitest";
 import {
   FacilitatorTimeoutError,
   SettleError,
@@ -482,12 +481,13 @@ describe("verifyPayment / settlePayment against a mocked facilitator", () => {
   });
 });
 
-// --------------------------- real HTTPFacilitatorClient vs local fake server
+// --------------------------- real HTTPFacilitatorClient with mocked transport
 
-describe("real HTTPFacilitatorClient against a local fake facilitator", () => {
-  let server: Server;
-  let baseUrl: string;
-  // Scriptable behaviour: the test sets these before each call.
+describe("real HTTPFacilitatorClient with a mocked fetch transport", () => {
+  const baseUrl = "https://facilitator.test";
+  // Scriptable behaviour: each test configures the same HTTP response the
+  // facilitator would send. The real x402 client still builds and parses the
+  // request; replacing fetch keeps these tests independent of loopback access.
   let verifyStatus = 200;
   let verifyBody: Record<string, unknown> = { isValid: true, payer: PAYEE };
   let settleStatus = 200;
@@ -498,59 +498,40 @@ describe("real HTTPFacilitatorClient against a local fake facilitator", () => {
   };
   let seenAuthHeader: string | undefined;
   let seenPaths: string[] = [];
+  let seenBodies: Array<Record<string, unknown>> = [];
 
-  beforeAll(
-    () =>
-      new Promise<void>((resolve) => {
-        server = createServer((req, res) => {
-          seenPaths.push(req.url ?? "");
-          seenAuthHeader = req.headers["x-api-key"] as string | undefined;
-          let body = "";
-          req.on("data", (c) => (body += c));
-          req.on("end", () => {
-            // The client must POST the real envelope — never a hand-built one.
-            if (req.url === "/verify" || req.url === "/settle") {
-              const parsed = JSON.parse(body) as Record<string, unknown>;
-              expect(parsed.x402Version).toBe(2);
-              expect(parsed.paymentPayload).toBeDefined();
-              expect(parsed.paymentRequirements).toBeDefined();
-            }
-            const status = req.url === "/verify" ? verifyStatus : req.url === "/settle" ? settleStatus : 200;
-            const payloadBody =
-              req.url === "/verify"
-                ? verifyBody
-                : req.url === "/settle"
-                  ? settleBody
-                  : {
-                      kinds: [
-                        {
-                          x402Version: 2,
-                          scheme: "exact",
-                          network: "eip155:11142220",
-                          extra: {},
-                        },
-                      ],
-                      extensions: [],
-                      signers: {},
-                    };
-            res.writeHead(status, { "content-type": "application/json" });
-            res.end(JSON.stringify(payloadBody));
-          });
-        });
-        server.listen(0, "127.0.0.1", () => {
-          const addr = server.address();
-          if (typeof addr === "object" && addr) baseUrl = `http://127.0.0.1:${addr.port}`;
-          resolve();
-        });
-      }),
-  );
+  beforeEach(() => {
+    verifyStatus = 200;
+    verifyBody = { isValid: true, payer: PAYEE };
+    settleStatus = 200;
+    settleBody = {
+      success: true,
+      transaction: "0xlocalsettle00000000000000000000000000000000000000000000000000",
+      network: "eip155:11142220",
+    };
+    seenAuthHeader = undefined;
+    seenPaths = [];
+    seenBodies = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      const path = url.pathname;
+      seenPaths.push(path);
+      seenAuthHeader = new Headers(init?.headers).get("x-api-key") ?? undefined;
+      if (typeof init?.body === "string") seenBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      const status = path === "/verify" ? verifyStatus : path === "/settle" ? settleStatus : 200;
+      const payloadBody = path === "/verify" ? verifyBody : path === "/settle" ? settleBody : {
+        kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:11142220", extra: {} }],
+        extensions: [],
+        signers: {},
+      };
+      return new Response(JSON.stringify(payloadBody), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+  });
 
-  afterAll(
-    () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      }),
-  );
+  afterEach(() => vi.unstubAllGlobals());
 
   it("/verify valid and /supported reachable through the real client", async () => {
     verifyStatus = 200;
@@ -562,6 +543,12 @@ describe("real HTTPFacilitatorClient against a local fake facilitator", () => {
     expect(kinds[0]).toMatchObject({ scheme: "exact", network: "eip155:11142220" });
     expect(seenPaths).toContain("/verify");
     expect(seenPaths).toContain("/supported");
+    expect(seenBodies).toHaveLength(1);
+    expect(seenBodies[0]).toMatchObject({
+      x402Version: 2,
+      paymentPayload: expect.any(Object),
+      paymentRequirements: expect.any(Object),
+    });
   });
 
   it("/verify invalid (200, isValid:false) and /settle 402 map distinctly", async () => {
@@ -584,6 +571,7 @@ describe("real HTTPFacilitatorClient against a local fake facilitator", () => {
       reason: "insufficient_credits",
       statusCode: 402,
     });
+    expect(seenBodies).toHaveLength(2);
   });
 
   it("the API key is sent as X-API-Key on /settle", async () => {
@@ -597,6 +585,7 @@ describe("real HTTPFacilitatorClient against a local fake facilitator", () => {
     const client = createFacilitatorClient({ url: baseUrl, apiKey: "x402_local_key" });
     await settlePayment(payload, sepoliaRequirements, client);
     expect(seenAuthHeader).toBe("x402_local_key");
+    expect(seenPaths).toContain("/settle");
   });
 });
 
