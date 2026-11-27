@@ -9,6 +9,7 @@ import {
   recordBillFunding,
 } from "@/lib/bills";
 import { getChainConfig } from "@/lib/jobs";
+import { verifiedBillFundingReport } from "@/lib/verifiedBillFunding";
 
 /**
  * POST /api/bills/[id]/update — the boss worker's receipt for a bill,
@@ -92,14 +93,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         { status: 502 },
       );
     }
-    if (!check.ok) {
+    const verifiedFunding = verifiedBillFundingReport(funding, check, {
+      token: CELO_TOKENS.USDT.address,
+      recipient: config.agentWallet,
+    });
+    if (!verifiedFunding) {
       return NextResponse.json(
         { error: FUNDING_REASONS[check.reason ?? ""] ?? "That funding payment didn't check out onchain — check the transaction hash and try again." },
         { status: 400 },
       );
     }
     try {
-      const funded = await recordBillFunding(id, funding);
+      const funded = await recordBillFunding(id, verifiedFunding);
       if (!parsed.data.patch && !parsed.data.event) {
         return NextResponse.json({ bill: funded });
       }
@@ -146,3 +151,4 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!updated) return NextResponse.json({ error: "No bill with that id." }, { status: 404 });
   return NextResponse.json({ bill: updated });
 }
+
