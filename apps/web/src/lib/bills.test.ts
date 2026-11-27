@@ -57,11 +57,6 @@ describe("BillInputSchema", () => {
     expect(() => BillInputSchema.parse({ ...VALID, purpose: "" })).toThrow();
     expect(() => BillInputSchema.parse({ ...VALID, minRate: 0 })).toThrow(/lowest rate/);
   });
-
-  it("accepts a pay-now bill and defaults to waiting for a rate", () => {
-    expect(BillInputSchema.parse({ ...VALID, payNow: true })).toMatchObject({ payNow: true, minRate: 1400 });
-    expect(BillInputSchema.parse(VALID).payNow).toBe(false);
-  });
 });
 
 describe("createBill / getBill / listBills", () => {
@@ -69,7 +64,6 @@ describe("createBill / getBill / listBills", () => {
     const bill = await createBill(VALID);
     expect(bill.id.startsWith("bill_")).toBe(true);
     expect(bill.status).toBe("created");
-    expect(bill.payNow).toBe(false);
     expect(bill.fundingReady).toBeNull();
     expect(bill.approvalTxHashes).toEqual([]);
     expect((await getBill(bill.id))?.purpose).toBe("Rice for the shop");
@@ -209,4 +203,12 @@ describe("formatting", () => {
     expect(formatNaira(5000000)).toBe("₦5,000,000");
     expect(formatRate(1444.5)).toBe("₦1,444.50 per $1");
   });
+});
+
+it("preserves legacy rules and round-trips new preferences", async () => {
+  expect(await createBill(VALID)).toMatchObject({ rateMode: "target", deadlinePolicy: "pay_at_deadline" });
+  const bill = await createBill({ ...VALID, rateMode: "current", deadlinePolicy: "keep_waiting" });
+  expect(await getBill(bill.id)).toMatchObject({ payNow: true, rateMode: "current", deadlinePolicy: "keep_waiting" });
+  const museBill = await createBill({ ...VALID, payNow: true });
+  expect(await getBill(museBill.id)).toMatchObject({ payNow: true, rateMode: "current", deadlinePolicy: "pay_at_deadline" });
 });

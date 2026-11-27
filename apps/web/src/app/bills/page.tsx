@@ -1,25 +1,13 @@
 "use client";
-
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Nav from "@/components/Nav";
-import { MAX_BILL_NGN, MIN_BILL_NGN } from "@/lib/billConstants";
+import BillFaq from "@/components/BillFaq";
+import { MAX_BILL_NGN, MIN_BILL_NGN, MAX_DEADLINE_DAYS } from "@/lib/billConstants";
+import "./bills.css";
 
-/**
- * Pay a naira bill — the form.
- *
- * One person owes a supplier in naira. They tell us who they are, what
- * the bill is for, how much, who gets paid, and when it is due — then
- * they choose how the rate works: pay now at the current rate, or wait
- * for a rate they name. Ikenga then changes USDT to cNGN on Celo and
- * pays the supplier in cNGN — at the current rate right away for a
- * pay-now bill, or only at the named rate or better (or at the deadline)
- * for a waiting bill.
- *
- * Nothing is paid on this page. After the bill is sent, the bill page
- * shows exactly how much USDT the swap needs and where to send it; the
- * money only moves once that USDT is in the agent wallet.
- */
+type Quote = { amountNgn: number; rate: number; neededUsdt: string; minimumRate: number; checkedAt: string; expiresAt: string };
+const money = (n: number, digits = 2) => n.toLocaleString("en-NG", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 export default function BillsPage() {
   const router = useRouter();
   const [payerName, setPayerName] = useState("");
@@ -28,208 +16,93 @@ export default function BillsPage() {
   const [supplierWallet, setSupplierWallet] = useState("");
   const [deadline, setDeadline] = useState("");
   const [minRate, setMinRate] = useState("");
-  const [mode, setMode] = useState<"wait" | "now">("wait");
-  const [liveRate, setLiveRate] = useState<number | null>(null);
-  const [quoteFailed, setQuoteFailed] = useState(false);
+  const [rateMode, setRateMode] = useState<"current" | "target">("current");
+  const [deadlinePolicy, setDeadlinePolicy] = useState<"pay_at_deadline" | "keep_waiting">("keep_waiting");
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [budget, setBudget] = useState("");
+  const [quoting, setQuoting] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [now, setNow] = useState(0);
+  useEffect(() => { setNow(Date.now()); const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  const amount = Number(amountNgn);
+  const matchingQuote = quote?.amountNgn === amount ? quote : null;
+  const fresh = matchingQuote !== null && now < Date.parse(matchingQuote.expiresAt);
+  const selectedMinimum = rateMode === "current" ? matchingQuote?.minimumRate : Number(minRate);
+  const estimatedUsdt = rateMode === "target" && Number(minRate) > 0 ? amount / Number(minRate) : null;
+  const difference = matchingQuote && budget !== "" ? Number(budget) - Number(matchingQuote.neededUsdt) : null;
 
-  // The rate right now, for the pay-now choice — best effort, the bill
-  // still works without it (the waiting choice needs no live rate).
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/quote?currency=cNGN")
-      .then((res) => res.json())
-      .then((json: { rate?: string | number }) => {
-        // The quote route sends the rate as a string ("1439.169").
-        const rate = typeof json.rate === "number" ? json.rate : Number(json.rate);
-        if (!cancelled && Number.isFinite(rate) && rate > 0) setLiveRate(rate);
-        else if (!cancelled) setQuoteFailed(true);
-      })
-      .catch(() => {
-        if (!cancelled) setQuoteFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
+  async function refreshQuote() {
+    setQuoting(true); setQuoteError(""); setQuote(null);
+    try {
+      const res = await fetch('/api/bills/quote?amountNgn=' + amount, { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Could not get a live quote.");
+      setQuote(json as Quote); setNow(Date.now());
+    } catch (err) { setQuoteError(err instanceof Error ? err.message : "Could not get a quote."); }
+    finally { setQuoting(false); }
+  }
   async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    if (mode === "now" && liveRate === null) {
-      setError("Could not read the rate right now — pick a rate to wait for instead, or try again in a moment.");
-      return;
-    }
+    e.preventDefault(); setError("");
+    if (rateMode === "current" && !fresh) { setError("Refresh the live quote before continuing."); return; }
     setBusy(true);
     try {
       const res = await fetch("/api/bills", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          payerName,
-          purpose,
-          amountNgn: Number(amountNgn),
-          supplierWallet,
-          deadline: deadline ? new Date(`${deadline}T23:59:59`).toISOString() : "",
-          minRate: mode === "now" ? liveRate : Number(minRate),
-          payNow: mode === "now",
-        }),
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ payerName, purpose, amountNgn: amount, supplierWallet,
+          deadline: deadline ? new Date(deadline).toISOString() : "",
+          minRate: selectedMinimum, rateMode, deadlinePolicy }),
       });
-      const json = (await res.json().catch(() => ({}))) as { bill?: { id: string }; error?: string };
-      if (!res.ok || !json.bill) throw new Error(json.error ?? "Could not save the bill — try again.");
-      router.push(`/bills/${json.bill.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the bill — try again.");
-      setBusy(false);
-    }
+      const json = await res.json();
+      if (!res.ok || !json.bill) throw new Error(json.error ?? "Could not save the bill.");
+      router.push('/bills/' + json.bill.id);
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not save the bill."); setBusy(false); }
   }
-
-  return (
-    <>
-      <Nav />
-      <main className="wrap" style={{ paddingTop: 48, paddingBottom: 96, maxWidth: 820 }}>
-        <a href="/" style={{ fontSize: 14, color: "var(--muted)" }}>← Back to Ikenga</a>
-        <div style={{ marginTop: 24 }}>
-          <span className="chip live">
-            <span className="dot" /> Pay a naira bill
-          </span>
-        </div>
-        <h1 style={{ fontSize: 36, marginTop: 14 }}>Pay a naira bill</h1>
-        <p style={{ marginTop: 14 }}><a href="/bills/history" className="btn secondary">My bill history →</a></p>
-        <p style={{ marginTop: 10, fontSize: "var(--lede)", color: "var(--ink-2)", lineHeight: 1.6 }}>
-          You owe someone in naira. We change USDT to cNGN on Celo and pay them in cNGN — at the current
-          rate right away, or at a rate you name. If the rate never reaches yours, we wait until the day
-          you pick, then pay anyway and show you exactly what the wait cost.
-        </p>
-
-        <form onSubmit={submit} className="card pad" style={{ marginTop: 24, display: "grid", gap: 16 }}>
-          <label className="field">
-            Your name
-            <span className="hint">Who owes this bill? The supplier sees this name on the receipt.</span>
-            <input value={payerName} onChange={(e) => setPayerName(e.target.value)} placeholder="e.g. Ada" required maxLength={100} />
-          </label>
-
-          <label className="field">
-            What is the bill for?
-            <span className="hint">A sentence, so everyone can see what the money was for.</span>
-            <input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. Rice for the shop" required maxLength={200} />
-          </label>
-
-          <label className="field">
-            How much, in naira?
-            <span className="hint">
-              Whole naira. The smallest bill that works is ₦{MIN_BILL_NGN.toLocaleString("en-NG")} — about $1,
-              the lowest amount the exchange will change. The biggest is ₦{MAX_BILL_NGN.toLocaleString("en-NG")}.
-            </span>
-            <input
-              value={amountNgn}
-              onChange={(e) => setAmountNgn(e.target.value)}
-              placeholder="e.g. 5000"
-              inputMode="numeric"
-              required
-              min={MIN_BILL_NGN}
-              max={MAX_BILL_NGN}
-              type="number"
-            />
-          </label>
-
-          <label className="field">
-            The supplier&apos;s wallet
-            <span className="hint">Their Celo wallet address (0x…). The cNGN goes straight there — not through us.</span>
-            <input
-              value={supplierWallet}
-              onChange={(e) => setSupplierWallet(e.target.value)}
-              placeholder="0x…"
-              required
-              pattern="^0x[0-9a-fA-F]{40}$"
-              className="mono"
-            />
-          </label>
-
-          <label className="field">
-            When is it due?
-            <span className="hint">
-              {mode === "now"
-                ? "If anything stalls, this is the last day we try to pay it."
-                : "The last day we can wait for your rate. After this day we pay anyway, at whatever the rate is."}
-            </span>
-            <input value={deadline} onChange={(e) => setDeadline(e.target.value)} required type="date" />
-          </label>
-
-          <fieldset className="field" style={{ border: "none", padding: 0, margin: 0 }}>
-            <legend style={{ fontWeight: 600, marginBottom: 8 }}>How should the rate work?</legend>
-            <label style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", border: "1px solid var(--line, #ddd)", borderRadius: 10, marginBottom: 8, cursor: quoteFailed ? "not-allowed" : "pointer", opacity: quoteFailed ? 0.6 : 1 }}>
-              <input
-                type="radio"
-                name="rate-mode"
-                checked={mode === "now"}
-                disabled={quoteFailed}
-                onChange={() => setMode("now")}
-                style={{ marginTop: 4 }}
-              />
-              <span>
-                <b>Pay now at the current rate</b>
-                <span className="hint" style={{ display: "block", marginTop: 2 }}>
-                  {liveRate !== null
-                    ? `About ₦${liveRate.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per $1 right now — pays as soon as the USDT is in, no waiting.`
-                    : quoteFailed
-                      ? "Could not read the rate right now — pick a rate to wait for instead, or try again in a moment."
-                      : "Checking today\u2019s rate…"}
-                </span>
-              </span>
-            </label>
-            <label style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", border: "1px solid var(--line, #ddd)", borderRadius: 10, cursor: "pointer" }}>
-              <input
-                type="radio"
-                name="rate-mode"
-                checked={mode === "wait"}
-                onChange={() => setMode("wait")}
-                style={{ marginTop: 4 }}
-              />
-              <span>
-                <b>Wait for a rate I want</b>
-                <span className="hint" style={{ display: "block", marginTop: 2 }}>
-                  We only change the money at the rate you name, or better, until the due date.
-                </span>
-              </span>
-            </label>
-          </fieldset>
-
-          {mode === "wait" && (
-            <label className="field">
-              The lowest rate you will accept, per dollar
-              <span className="hint">
-                Naira per $1.{" "}
-                {liveRate !== null
-                  ? `The rate right now is about ₦${liveRate.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per $1.`
-                  : "Check today\u2019s rate before you pick."}{" "}
-                We only change the money at this rate or better, until the due date.
-              </span>
-              <input
-                value={minRate}
-                onChange={(e) => setMinRate(e.target.value)}
-                placeholder="e.g. 1444"
-                inputMode="decimal"
-                required
-                min={1}
-                step="any"
-                type="number"
-              />
-            </label>
-          )}
-
-          {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={busy} className="btn leaf lg block">
-            {busy ? "Saving your bill…" : "Send the bill"}
-          </button>
-          <p className="note" style={{ textAlign: "center" }}>
-            Nothing is paid here. The next page shows exactly how much USDT the swap needs and where to send
-            it — the money only moves once that USDT is in the agent wallet.
-          </p>
-        </form>
-      </main>
-    </>
-  );
+  return <><Nav /><main className="wrap bill-flow">
+    <a href="/">← Back to Ikenga</a>
+    <div style={{ marginTop: 26 }}><span className="chip live"><span className="dot" /> Ikenga Pay</span></div>
+    <h1>Your bill. Your rate. Your timing.</h1>
+    <p className="bill-intro">Fund with USDT on Celo. Choose a current quote or wait for your target rate, and your supplier receives the agreed amount in cNGN.</p>
+    <p style={{ marginTop: 18 }}><a href="/bills/history" className="btn secondary">My bill history →</a> <a href="#bill-faq" style={{ marginLeft: 18 }}>How it works ↓</a></p>
+    <form onSubmit={submit} className="card pad bill-form">
+      <fieldset><legend>1. Set the supplier’s bill</legend><div className="bill-fields">
+        <label className="field">Your name<input value={payerName} onChange={e => setPayerName(e.target.value)} required maxLength={100} placeholder="e.g. Ada" /></label>
+        <label className="field">What is the bill for?<input value={purpose} onChange={e => setPurpose(e.target.value)} required maxLength={200} placeholder="e.g. Rice for the shop" /></label>
+        <label className="field">Supplier receives (cNGN)<span className="hint">Whole naira: ₦{MIN_BILL_NGN.toLocaleString("en-NG")}–₦{MAX_BILL_NGN.toLocaleString("en-NG")}. 1 cNGN represents ₦1.</span><input type="number" inputMode="numeric" min={MIN_BILL_NGN} max={MAX_BILL_NGN} step="1" value={amountNgn} onChange={e => { setAmountNgn(e.target.value); setQuoteError(""); }} required placeholder="e.g. 5000" /></label>
+        <label className="field">Supplier’s Celo wallet<span className="hint">The supplier receives cNGN in this wallet. This does not pay a bank account or utility company directly.</span><input value={supplierWallet} onChange={e => setSupplierWallet(e.target.value)} required pattern="^0x[0-9a-fA-F]{40}$" placeholder="0x…" className="mono" /></label>
+      </div></fieldset>
+      <fieldset><legend>2. Choose your exchange rate</legend><div className="bill-options">
+        <label className={'bill-choice ' + (rateMode === "current" ? "selected" : "")}><input type="radio" name="rateMode" value="current" checked={rateMode === "current"} onChange={() => setRateMode("current")} /><span><b>Use the current rate</b><small>Start from a live quote with a 0.5% movement allowance. The worker checks bills every few minutes; this does not reserve the quote or guarantee an instant payout.</small></span></label>
+        <label className={'bill-choice ' + (rateMode === "target" ? "selected" : "")}><input type="radio" name="rateMode" value="target" checked={rateMode === "target"} onChange={() => setRateMode("target")} /><span><b>Wait for my target rate</b><small>Choose the minimum cNGN per USDT you want the worker to accept.</small></span></label>
+      </div>
+      {rateMode === "target" && <label className="field">My minimum rate (cNGN per 1 USDT)<input type="number" inputMode="decimal" min="0.000001" max="100000" step="any" value={minRate} onChange={e => setMinRate(e.target.value)} required placeholder="e.g. 1450" /><span className="hint">A higher rate means less USDT for the same bill. The target may never be reached.</span></label>}
+      <div className="bill-quote" style={{ marginTop: 18 }}>
+        <button className="btn secondary" type="button" onClick={refreshQuote} disabled={quoting || !Number.isInteger(amount) || amount < MIN_BILL_NGN || amount > MAX_BILL_NGN}>{quoting ? "Checking Textile FX…" : "Get / refresh live quote"}</button>
+        {quoteError && <p role="alert" className="error">{quoteError}</p>}
+        {matchingQuote && <>
+          <p><strong>{matchingQuote.neededUsdt} USDT</strong><br />Estimated cost for {money(amount, 0)} cNGN</p>
+          <p>Live rate: ₦{money(matchingQuote.rate)} per 1 USDT · conversion fee included; network gas separate.</p>
+          <p role="status">{fresh ? 'Preview valid for ' + Math.max(0, Math.ceil((Date.parse(matchingQuote.expiresAt) - now) / 1000)) + ' seconds.' : "Preview expired. Refresh to use the current rate."}</p>
+          {rateMode === "current" && <p><b>Minimum accepted rate: ₦{money(matchingQuote.minimumRate, 6)} per USDT.</b> Up to 0.5% below this preview. A worse firm rate waits under your deadline rule.</p>}
+          <label className="field">Compare my USDT budget (optional)<input type="number" inputMode="decimal" min="0" step="0.000001" value={budget} onChange={e => setBudget(e.target.value)} placeholder={matchingQuote.neededUsdt} /></label>
+          {difference !== null && <p aria-live="polite">{!fresh ? "Refresh the quote to compare your budget with the latest rate. " : ""}{Math.abs(difference) < 0.000001 ? "Your budget matches this preview." : difference < 0 ? 'Increase by ' + money(-difference, 6) + ' USDT to cover this preview.' : 'Reduce by ' + money(difference, 6) + ' USDT to match this preview.'} Estimated value: {money(Number(budget) * matchingQuote.rate)} cNGN. The supplier’s bill stays at {money(amount, 0)} cNGN.</p>}
+        </>}
+        {estimatedUsdt !== null && amount > 0 && <p>At your target: about <b>{money(estimatedUsdt, 6)} USDT</b>. This is an estimate; a live quote is required before conversion.</p>}
+        <p className="bill-disclosure">This is a preview, not a reserved rate. Funding and worker processing take time; refresh before continuing. No funds move on this form.</p>
+      </div></fieldset>
+      <fieldset><legend>3. Decide what happens when it’s due</legend><div className="bill-fields">
+        <label className="field">Due date and time (your local time)<input type="datetime-local" value={deadline} onChange={e => setDeadline(e.target.value)} required /><span className="hint">Choose a future time within {MAX_DEADLINE_DAYS} days. Payments depend on worker checks and quote availability.</span></label>
+        <label className={'bill-choice ' + (deadlinePolicy === "keep_waiting" ? "selected" : "")}><input type="radio" name="deadlinePolicy" checked={deadlinePolicy === "keep_waiting"} onChange={() => setDeadlinePolicy("keep_waiting")} /><span><b>Keep waiting for my minimum rate</b><small>Protect the minimum even after the due date. The supplier may be paid late, or the target may never be reached. Funds remain in the agent wallet while waiting.</small></span></label>
+        <label className={'bill-choice ' + (deadlinePolicy === "pay_at_deadline" ? "selected" : "")}><input type="radio" name="deadlinePolicy" checked={deadlinePolicy === "pay_at_deadline"} onChange={() => setDeadlinePolicy("pay_at_deadline")} /><span><b>Pay at the available rate when due</b><small>I allow conversion below my minimum after the due time. More USDT may be needed; payment still requires funding, liquidity, gas and a valid quote.</small></span></label>
+      </div></fieldset>
+      <div className="bill-review">
+        <p><b>Before you continue:</b> supplier receives {amount > 0 ? money(amount, 0) : "your entered amount in"} cNGN. {selectedMinimum ? 'Minimum rate: ₦' + money(selectedMinimum, 6) + ' per USDT. ' : ""}{deadlinePolicy === "keep_waiting" ? "Your minimum stays protected after the due date." : "You allow a lower rate after the due date."}</p>
+        <p className="bill-disclosure">Funding goes to an operator-controlled wallet, separately from job escrow. After your wallet confirms funding, the worker checks about every five minutes. It uses a fresh firm quote and waits if the rate is below your displayed minimum (or follows your deadline rule). The preview is not reserved. Unused USDT is not automatically refunded. Bill detail links are accessible to anyone with the link; avoid sensitive information.</p>
+        {error && <p role="alert" className="error">{error}</p>}
+        <button className="btn leaf lg block" type="submit" disabled={busy || (rateMode === "current" && !fresh)}>{busy ? "Saving your bill…" : "Create bill & review funding →"}</button>
+        <p className="note">You will review and sign the USDT funding transaction on the next page.</p>
+      </div>
+    </form><BillFaq />
+  </main></>;
 }
-

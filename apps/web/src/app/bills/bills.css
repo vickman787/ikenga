@@ -1,0 +1,24 @@
+.bill-flow { max-width: 900px; padding-top: 48px; padding-bottom: 96px; }
+.bill-flow h1 { font-size: clamp(32px, 5vw, 48px); margin: 18px 0 12px; }
+.bill-intro { max-width: 650px; color: var(--ink-2); line-height: 1.7; }
+.bill-form { margin-top: 28px; display: grid; gap: 26px; }
+.bill-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.bill-form legend { font-size: 20px; font-weight: 650; margin-bottom: 16px; }
+.bill-fields { display: grid; gap: 18px; }
+.bill-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+.bill-choice { display: flex; align-items: flex-start; gap: 10px; padding: 18px; border: 1px solid var(--line, #dbe3d7); border-radius: 14px; cursor: pointer; background: var(--paper, #fff); }
+.bill-choice.selected { border-color: var(--forest, #183c2b); background: #eef4e8; }
+.bill-choice input { width: 18px; height: 18px; margin-top: 3px; accent-color: #234c36; flex-shrink: 0; }
+.bill-choice small { display: block; line-height: 1.5; color: var(--muted); margin-top: 6px; }
+.bill-quote { background: #f1f5ed; border: 1px solid #dce6d4; border-radius: 16px; padding: 20px; display: grid; gap: 12px; }
+.bill-quote strong { font-size: 26px; }
+.bill-quote p, .bill-disclosure { line-height: 1.7; }
+.bill-disclosure { font-size: 14px; color: var(--ink-2); }
+.bill-review { border-top: 1px solid #dbe3d7; padding-top: 20px; display: grid; gap: 12px; }
+.bill-faq { margin-top: 64px; }
+.bill-faq h2 { margin: 14px 0 10px; font-size: clamp(25px, 4vw, 34px); }
+.bill-faq > p { color: var(--muted); margin-bottom: 22px; }
+.bill-faq details { border-bottom: 1px solid #dbe3d7; padding: 18px 0; }
+.bill-faq summary { cursor: pointer; font-weight: 600; line-height: 1.6; }
+.bill-faq details p { margin-top: 12px; color: var(--ink-2); line-height: 1.8; }
+@media (max-width: 600px) { .bill-options { grid-template-columns: 1fr; } .bill-flow { padding-top: 30px; } .bill-choice { padding: 15px; } }

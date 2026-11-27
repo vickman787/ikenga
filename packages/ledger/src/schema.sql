@@ -189,10 +189,6 @@ ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_payer_wallet TEXT;
 ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_tx_hashes TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE bills ADD COLUMN IF NOT EXISTS funding_paid_usdt_atomic TEXT;
 
--- Pay-now bills: the payer chose the current rate instead of a target
--- rate. Added with IF NOT EXISTS so old databases pick it up on init.
-ALTER TABLE bills ADD COLUMN IF NOT EXISTS pay_now BOOLEAN NOT NULL DEFAULT FALSE;
-
 -- One hash-chained receipt per bill event — the same chaining as the CFO
 -- decision log, so a bill's history can't be rewritten silently.
 CREATE TABLE IF NOT EXISTS bill_events (
@@ -223,3 +219,9 @@ CREATE INDEX IF NOT EXISTS bill_events_bill_idx ON bill_events (bill_id, created
 -- for the new one.
 ALTER TABLE bill_events DROP CONSTRAINT IF EXISTS bill_events_kind_check;
 ALTER TABLE bill_events ADD CONSTRAINT bill_events_kind_check CHECK (kind IN ('created', 'quote', 'refuse', 'convert', 'swap', 'payout', 'paid', 'failed', 'waiting', 'funded', 'checked'));
+
+-- Additive preferences; defaults preserve existing bills.
+-- pay_now is retained for compatibility with the deployed Muse release.
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS pay_now BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS rate_mode TEXT NOT NULL DEFAULT 'target' CHECK (rate_mode IN ('current', 'target'));
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS deadline_policy TEXT NOT NULL DEFAULT 'pay_at_deadline' CHECK (deadline_policy IN ('pay_at_deadline', 'keep_waiting'));

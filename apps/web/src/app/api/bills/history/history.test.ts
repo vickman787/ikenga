@@ -48,4 +48,3 @@ describe("wallet bill history", () => {
     expect((await response.json()).bills.map((b: { id: string }) => b.id)).toEqual(["other-wallet-secret"]);
   });
 });
-

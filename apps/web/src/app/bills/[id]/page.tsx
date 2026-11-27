@@ -30,7 +30,8 @@ interface BillDetail {
     supplierWallet: string;
     deadline: string;
     minRate: number;
-    payNow: boolean;
+    rateMode?: "current" | "target";
+    deadlinePolicy?: "pay_at_deadline" | "keep_waiting";
     status: "created" | "watching" | "converting" | "paid" | "failed";
     note: string | null;
     lastCheckedAt: string | null;
@@ -269,19 +270,14 @@ export default function BillPage() {
                 </a>
               </p>
               <p><b>Due:</b> {new Date(bill.deadline).toLocaleDateString("en-NG", { day: "numeric", month: "long", year: "numeric" })}</p>
-              {bill.payNow ? (
-                <p><b>Pay now at the current rate</b> — about {formatRate(bill.minRate)} when you sent it. No waiting for a rate.</p>
-              ) : (
-                <p><b>Lowest rate you will accept:</b> {formatRate(bill.minRate)}</p>
-              )}
+              <p><b>Rate choice:</b> {bill.rateMode === "current" ? "Current quote with a protected minimum" : "Target rate"}</p>
+              <p><b>Lowest rate you will accept:</b> {formatRate(bill.minRate)}</p>
+              <p><b>At the due time:</b> {bill.deadlinePolicy === "keep_waiting" ? "Keep waiting for the minimum rate, even if payment is late." : "Allow payment at the available rate, including below the minimum, subject to funding and a valid quote."}</p>
+              <p><a href="/bills#bill-faq">How funding, rates and deadlines work →</a></p>
               {bill.lastRate !== null && (
                 <p>
                   <b>Latest rate seen:</b> {formatRate(bill.lastRate)}
-                  {bill.payNow
-                    ? " — paying at the current rate."
-                    : bill.lastRate >= bill.minRate
-                      ? " — at or above your minimum."
-                      : " — below your minimum, so we wait."}
+                  {bill.lastRate >= bill.minRate ? " — at or above your minimum." : " — below your minimum, so we wait."}
                   {bill.lastRateAt && (
                     <span style={{ color: "var(--muted)" }}> ({new Date(bill.lastRateAt).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" })})</span>
                   )}
@@ -298,8 +294,7 @@ export default function BillPage() {
               )}
               {billOpen && neededAtomic !== null && remainingAtomic === 0n && paidAtomic > 0n && (
                 <p>
-                  <b>You paid {formatBillUsdt(paidAtomic)} USDT</b> — the money is in the agent wallet
-                  {bill.payNow ? " and we pay it at the current rate." : " and we are watching the rate."}
+                  <b>You paid {formatBillUsdt(paidAtomic)} USDT</b> — the money is in the agent wallet and we are watching the rate.
                   {bill.fundingPayerWallet && (
                     <> It came from <span className="mono" style={{ fontSize: 13 }}>{shortAddress(bill.fundingPayerWallet)}</span>.</>
                   )}
@@ -349,7 +344,7 @@ export default function BillPage() {
                       : paidAtomic > 0n ? `Top up ${formatBillUsdt(remainingAtomic)} USDT` : `Pay ${formatBillUsdt(remainingAtomic)} USDT from my wallet`}
                   </button>
                   {payStatus === "done" && (
-                    <p style={{ marginTop: 8 }}><b>Paid.</b> The money is in the agent wallet — {bill.payNow ? "we pay it at the current rate." : "we are watching the rate."}</p>
+                    <p style={{ marginTop: 8 }}><b>Paid.</b> The money is in the agent wallet — we are watching the rate.</p>
                   )}
                   {payError && (
                     <p style={{ marginTop: 8, color: "#a33" }}>{payError}</p>
@@ -473,4 +468,3 @@ export default function BillPage() {
     </>
   );
 }
-

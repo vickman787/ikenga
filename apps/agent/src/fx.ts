@@ -23,6 +23,7 @@ export interface FxDecisionInput {
   obligationNaira: number;
   /** Minimum acceptable rate, cNGN per 1 USDT. */
   minRate: number;
+  deadlinePolicy?: "pay_at_deadline" | "keep_waiting";
   /** Obligation deadline (ISO). */
   deadline: string;
   /** Current time (ISO) — injected, never read from the clock here. */
@@ -57,7 +58,7 @@ export function decideFx(input: FxDecisionInput): FxDecision {
   const nowMs = Date.parse(now);
   const deadlineMs = Date.parse(deadline);
   if (Number.isNaN(nowMs) || Number.isNaN(deadlineMs)) throw new Error("now/deadline must be ISO timestamps");
-  const pastDeadline = nowMs >= deadlineMs;
+  const pastDeadline = nowMs >= deadlineMs && input.deadlinePolicy !== "keep_waiting";
 
   if (!quote) {
     return pastDeadline

@@ -4,8 +4,8 @@
  * A bill is one person owing a supplier in naira. The worker watches it
  * every run (the 5-minute cron) and does the money part the web server
  * cannot: it checks the live Textile FX rate, changes USDT to cNGN, and
- * pays the supplier in cNGN — only at the rate the payer named, at the
- * current rate when the payer chose pay-now, or at the deadline.
+ * pays the supplier in cNGN — only at the rate the payer named, or at
+ * the deadline.
  *
  * Money rules, in order:
  *   1. The supplier must not be the agent wallet itself.
@@ -25,11 +25,10 @@
  *      promised.
  *   4. Below the minimum rate and before the deadline, the worker
  *      refuses (decideFx) and writes a receipt for what waiting saved.
- *      A refusal is recorded once, not every run. A pay-now bill never
- *      refuses on the rate — the payer already chose the current rate.
- *   5. At or above the minimum — or at the deadline, or for a pay-now
- *      bill — a firm quote is requested and decideFx makes the call. A
- *      refused firm quote is cancelled, so the maker's slot is freed.
+ *      A refusal is recorded once, not every run.
+ *   5. At or above the minimum — or at the deadline — a firm quote is
+ *      requested and decideFx makes the call. A refused firm quote is
+ *      cancelled, so the maker's slot is freed.
  *   6. The swap goes through executeSwap with a split sender: the USDT
  *      approval is tagged (sendTagged), the swap itself is broadcast
  *      EXACTLY as Textile returned it — never re-tagged (textile.ts
@@ -67,7 +66,7 @@ import {
   type SendFn,
   type TextileTx,
 } from "@ikenga/payments";
-import { decideFx, type FxDecision } from "./fx.js";
+import { decideFx } from "./fx.js";
 import { investigateBillPayout, investigateBillSwap } from "./investigator.js";
 import type { BillDecision } from "@ikenga/ledger";
 
@@ -150,8 +149,10 @@ export interface SiteBill {
   supplierWallet: string;
   deadline: string;
   minRate: number;
-  /** True when the payer chose to pay at the current rate instead of waiting for a target rate. The minRate is then the rate seen when the bill was sent, for the receipt — the worker never waits on it. */
-  payNow: boolean;
+  /** Worker-pack compatibility with Muse's pay_now field; this does not remove the saved minRate floor. */
+  payNow?: boolean;
+  rateMode?: "current" | "target";
+  deadlinePolicy?: "pay_at_deadline" | "keep_waiting";
   status: string;
   note: string | null;
   lastDecision: BillDecision | null;
@@ -363,12 +364,12 @@ async function processOneBill(
   }
 
   // 5. Below the minimum and before the deadline: refuse, and write the receipt once.
-  // A pay-now bill never refuses on the rate — the payer already chose the current rate.
-  const pastDeadline = Date.parse(now) >= Date.parse(bill.deadline);
-  if (rate < bill.minRate && !pastDeadline && !bill.payNow) {
+  const pastDeadline = Date.parse(now) >= Date.parse(bill.deadline) && bill.deadlinePolicy !== "keep_waiting";
+  if (rate < bill.minRate && !pastDeadline) {
     const decision = decideFx({
       obligationNaira: bill.amountNgn,
       minRate: bill.minRate,
+      deadlinePolicy: bill.deadlinePolicy,
       deadline: bill.deadline,
       now,
       quote: { rate, expiresAt: new Date(Date.parse(now) + 60_000).toISOString() },
@@ -420,21 +421,16 @@ async function processOneBill(
   }
   const quote = firm.quote;
   const firmRate = quoteRate(quote.buyAmount, quote.takerPays);
-  // A pay-now bill converts at the firm rate whatever it is — the payer
-  // already chose the current rate, so there is no minimum to refuse on.
-  const decision: FxDecision = bill.payNow
-    ? {
-        action: "convert",
-        reason: `Pay now at the current rate ₦${firmRate} per $1, as the payer chose.`,
-        rateSeen: firmRate,
-      }
-    : decideFx({
-        obligationNaira: bill.amountNgn,
-        minRate: bill.minRate,
-        deadline: bill.deadline,
-        now: rt.nowIso(),
-        quote: { rate: firmRate, expiresAt: quote.expiresAt },
-      });
+  // Even when the payer selected "current rate", minRate is the consent floor saved from the quote.
+  // Rates can move between signing the funding transfer and this worker run; payNow never means any price.
+  const decision = decideFx({
+    obligationNaira: bill.amountNgn,
+    minRate: bill.minRate,
+    deadlinePolicy: bill.deadlinePolicy,
+    deadline: bill.deadline,
+    now: rt.nowIso(),
+    quote: { rate: firmRate, expiresAt: quote.expiresAt },
+  });
   if (decision.action === "refuse" || decision.action === "wait") {
     // Free the maker's slot, then record the refusal (once).
     try {
@@ -462,6 +458,19 @@ async function processOneBill(
           : { kind: "refuse", reason: decision.reason, rateSeen: firmRate, bpsGap: decision.bpsGap ?? null },
     });
     return { actionsUsed: 0, outcome: decision.action === "refuse" ? "refused" : "waiting" };
+  }
+
+  // A changed firm quote must not consume another bill's funding.
+  const firmNeeded = BigInt(quote.takerPays);
+  if (firmNeeded > paidAtomic || firmNeeded > usdt || Date.parse(quote.expiresAt) <= Date.parse(rt.nowIso())) {
+    try { await rt.cancelQuote(quote.rfqId, quote.claimToken); } catch { /* Quote expires itself. */ }
+    await rt.updateBill(bill.id, { patch: {
+      status: "watching", lastCheckedAt: rt.nowIso(), lastRate: firmRate,
+      lastRateAt: rt.nowIso(), fundingNeededUsdt: formatUsdtAtomic(quote.takerPays),
+      fundingReady: firmNeeded <= paidAtomic && firmNeeded <= usdt,
+      note: "The firm quote changed or expired. Review the latest funding requirement; nothing has been converted.",
+    } });
+    return { actionsUsed: 0, outcome: "waiting" };
   }
 
   // 7. Convert (or force-convert at the deadline). The swap needs the
@@ -537,9 +546,7 @@ async function processOneBill(
       reason:
         decision.action === "force-convert"
           ? `Deadline reached — changed USDT to cNGN at ₦${firmRate.toLocaleString("en-NG")} per $1, below the minimum, and recorded the concession.`
-          : bill.payNow
-            ? `Changed USDT to cNGN at ₦${firmRate.toLocaleString("en-NG")} per $1, at the current rate as the payer chose.`
-            : `Changed USDT to cNGN at ₦${firmRate.toLocaleString("en-NG")} per $1.`,
+          : `Changed USDT to cNGN at ₦${firmRate.toLocaleString("en-NG")} per $1.`,
       rateSeen: firmRate,
       bpsGap: decision.bpsGap ?? null,
       txHash: executed.txHash,

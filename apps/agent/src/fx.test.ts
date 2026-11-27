@@ -47,3 +47,10 @@ describe("decideFx()", () => {
     expect(bpsGap(1500, 1500)).toBe(0);
   });
 });
+
+it("protects the minimum after due time when keep_waiting is chosen", () => {
+  const input = { ...base, deadlinePolicy: "keep_waiting" as const, now: base.deadline };
+  expect(decideFx({ ...input, quote: { rate: 1400, expiresAt: "2026-12-07T10:00:00Z" } }).action).toBe("refuse");
+  expect(decideFx({ ...input, quote: { rate: 1500, expiresAt: "2026-12-07T10:00:00Z" } }).action).toBe("convert");
+  expect(decideFx({ ...input, quote: null }).action).toBe("wait");
+});

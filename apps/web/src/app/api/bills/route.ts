@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
-import { createBill, listBills } from "@/lib/bills";
+import { BillInputSchema, createBill, listBills } from "@/lib/bills";
 import { getChainConfig, ledgerBackend } from "@/lib/jobs";
+
+import { previewBill } from "@/lib/billQuote";
 
 export async function GET() {
   const bills = await listBills();
   return NextResponse.json({
     bills: [...bills].reverse(),
     backend: ledgerBackend(),
-    note: "A naira bill is one person owing a supplier in naira. Ikenga changes USDT to cNGN and pays the supplier — only at the rate the payer named, at the current rate when they chose pay-now, or at the deadline. Nothing moves until the agent wallet holds the USDT for it.",
+    note: "A naira bill is one person owing a supplier in naira. Ikenga changes USDT to cNGN and pays the supplier — according to the payer’s minimum rate and chosen deadline rule. Nothing moves until the agent wallet holds the USDT for it.",
   });
 }
 
@@ -20,7 +22,13 @@ export async function POST(req: Request) {
     );
   }
   try {
-    const body = await req.json();
+    const body = BillInputSchema.parse(await req.json());
+    if (body.rateMode === "current" || body.payNow === true) {
+      const live = await previewBill(body.amountNgn);
+      if (live.rate < body.minRate) {
+        return NextResponse.json({ error: "The live rate changed. Refresh the quote and review the updated rate limit." }, { status: 409 });
+      }
+    }
     const bill = await createBill(body);
     return NextResponse.json({ bill }, { status: 201 });
   } catch (err) {

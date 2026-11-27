@@ -33,6 +33,10 @@ const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
 export const BillInputSchema = z.object({
+  rateMode: z.enum(["current", "target"]).optional(),
+  /** Compatibility for the already deployed pay_now API/schema. */
+  payNow: z.boolean().optional(),
+  deadlinePolicy: z.enum(["pay_at_deadline", "keep_waiting"]).optional(),
   payerName: z.string().trim().min(1, "Tell us your name").max(100),
   purpose: z.string().trim().min(1, "What is the bill for?").max(200),
   amountNgn: z
@@ -55,8 +59,6 @@ export const BillInputSchema = z.object({
     .finite("Enter a rate per dollar")
     .gt(0, "Enter the lowest rate per dollar you will accept")
     .lte(100_000, "That rate looks wrong — check it and try again"),
-  /** True when the payer chose to pay at the current rate instead of waiting for a target rate. The minRate sent with it is the rate seen when the bill was sent, for the receipt — the worker never waits on it. */
-  payNow: z.boolean().default(false),
 });
 export type BillInput = z.infer<typeof BillInputSchema>;
 
@@ -111,8 +113,10 @@ export interface BillResult {
   supplierWallet: string;
   deadline: string;
   minRate: number;
-  /** True when the payer chose to pay at the current rate instead of waiting for a target rate. */
+  /** Compatibility flag consumed by the worker; current-rate bills still keep the displayed minimum floor. */
   payNow: boolean;
+  rateMode?: "current" | "target";
+  deadlinePolicy?: "pay_at_deadline" | "keep_waiting";
   status: LedgerBill["status"];
   note: string | null;
   lastCheckedAt: string | null;
@@ -150,7 +154,9 @@ export function billToResult(b: LedgerBill): BillResult {
     supplierWallet: b.supplierWallet,
     deadline: b.deadline,
     minRate: b.minRate,
-    payNow: b.payNow,
+    payNow: b.payNow ?? (b.rateMode ?? "target") === "current",
+    rateMode: b.payNow ? "current" : (b.rateMode ?? "target"),
+    deadlinePolicy: b.deadlinePolicy ?? "pay_at_deadline",
     status: b.status,
     note: b.note,
     lastCheckedAt: b.lastCheckedAt,
@@ -186,8 +192,10 @@ export function formatRate(rate: number): string {
   return `₦${rate.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per $1`;
 }
 
-export async function createBill(input: z.input<typeof BillInputSchema>): Promise<BillResult> {
+export async function createBill(input: BillInput): Promise<BillResult> {
   const parsed = BillInputSchema.parse(input);
+  const rateMode = parsed.rateMode ?? (parsed.payNow ? "current" : "target");
+  const payNow = parsed.payNow ?? rateMode === "current";
   const id = `bill_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const ledger = await getLedger();
   const entry = `created|Bill submitted.|${parsed.amountNgn}`;
@@ -199,13 +207,15 @@ export async function createBill(input: z.input<typeof BillInputSchema>): Promis
     supplierWallet: parsed.supplierWallet,
     deadline: new Date(parsed.deadline).toISOString(),
     minRate: parsed.minRate,
-    payNow: parsed.payNow,
+    rateMode,
+    payNow,
+    deadlinePolicy: parsed.deadlinePolicy ?? "pay_at_deadline",
   });
   await ledger.appendBillEvent({
     id: `bev_${id}`,
     billId: id,
     kind: "created",
-    reason: `Bill submitted: ${formatNaira(parsed.amountNgn)} for ${parsed.purpose}${parsed.payNow ? " — pay now at the current rate." : "."}`,
+    reason: `Bill submitted: ${formatNaira(parsed.amountNgn)} for ${parsed.purpose}. Rate choice: ${rateMode}; deadline rule: ${parsed.deadlinePolicy ?? "pay_at_deadline"}.`,
     rateSeen: null,
     bpsGap: null,
     txHash: null,
@@ -281,10 +291,7 @@ export async function findBillByFundingTxHash(txHash: string): Promise<BillResul
 /**
  * Record a funding payment on a bill — after the update route has
  * verified the transfer onchain (successful, USDT, from the payer's
- * wallet, to the agent wallet). The amount recorded is the transfer's
- * actual onchain amount: the page reports what it computed as still
- * needed, but the quote moves and a payer may round up, so a top-up
- * for more or less than that still counts at what actually arrived.
+ * wallet, to the agent wallet, for exactly this amount).
  *
  * The payment is added to the bill's own funding total, so a second
  * transfer tops the same bill up when the rate moved and more is
