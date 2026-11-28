@@ -587,6 +587,25 @@ describe("executeSwap (mocked sendFn — no chain, no broadcast)", () => {
     expect(sent).toHaveLength(0);
   });
 
+  it("broadcasts an untagged quote byte-for-byte when Textile returns no suffix", async () => {
+    const quote = quotedFixture({
+      transactions: {
+        approval: { to: USDT, data: "0x095ea7b3", value: "0", chainId: 42220 },
+        swap: { to: TEXTILE_CELO_REACTOR, data: UNTAGGED_SWAP_DATA, value: "0", chainId: 42220 },
+      },
+      attributionSuffix: null,
+    });
+    const { client, sent, sendFn, waitForReceipt } = setup(quote);
+    const res = await client.executeSwap(quote, sendFn, {
+      waitForReceipt,
+      getAllowance: async () => 9999000n,
+      requireAttribution: quote.attributionSuffix != null,
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.data).toBe(UNTAGGED_SWAP_DATA);
+    expect(res.attributionTagged).toBe(false);
+  });
+
   it("a submit failure does not fail the swap — it is reported in the result", async () => {
     const quote = quotedFixture();
     const { client, sent, sendFn, waitForReceipt } = setup(quote, 409);
