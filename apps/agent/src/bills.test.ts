@@ -24,7 +24,7 @@ const SUPPLIER = "0x00000000000000000000000000000000000000aa";
 const SWAP_DATA = "0xabcdef0123456789";
 const APPROVAL_DATA = "0x095ea7b3000000000000000000000000a9aa0a64769cbed4d3b1ceb4df01cde915c235b3000000000000000000000000000000000000000000000000000000000000351d4";
 
-function fakeQuote(overrides: { buyAmount?: string; takerPays?: string; rateRay?: string } = {}) {
+function fakeQuote(overrides: { buyAmount?: string; takerPays?: string; rateRay?: string; attributionSuffix?: string | null } = {}) {
   return {
     rfqId: "rfq_test_1",
     claimToken: "claim_test_1",
@@ -43,7 +43,7 @@ function fakeQuote(overrides: { buyAmount?: string; takerPays?: string; rateRay?
     signature: "0x00",
     orders: [],
     transactions: { swap: { to: TEXTILE_REACTOR, data: SWAP_DATA, value: "0" } },
-    attributionSuffix: null,
+    attributionSuffix: overrides.attributionSuffix ?? null,
   };
 }
 
@@ -91,6 +91,7 @@ interface FakeState {
   firmQuotes: number;
   cancels: string[];
   swapReceipt: { status: "success" | "reverted" } | null;
+  requireAttribution: boolean | undefined;
 }
 
 function fakeRuntime(overrides: {
@@ -98,6 +99,7 @@ function fakeRuntime(overrides: {
   previewNoQuote?: boolean;
   firmNoQuote?: boolean;
   firmRate?: { buyAmount: string; takerPays: string };
+  firmAttributionSuffix?: string | null;
   usdt?: bigint;
   cngn?: bigint;
   celo?: bigint;
@@ -107,7 +109,7 @@ function fakeRuntime(overrides: {
   /** The chain cannot be read at all. */
   codeAtThrows?: boolean;
 } = {}): { rt: BillRuntime; state: FakeState } {
-  const state: FakeState = { updates: [], tagged: [], raw: [], firmQuotes: 0, cancels: [], swapReceipt: { status: "success" } };
+  const state: FakeState = { updates: [], tagged: [], raw: [], firmQuotes: 0, cancels: [], swapReceipt: { status: "success" }, requireAttribution: undefined };
   const preview = overrides.previewRate ?? { buyAmount: "5000000000", takerPays: "3462600" };
   const firm = overrides.firmRate ?? preview;
   const rt: BillRuntime = {
@@ -120,7 +122,7 @@ function fakeRuntime(overrides: {
       state.firmQuotes += 1;
       return overrides.firmNoQuote
         ? { kind: "no_quote", reason: "no_makers_online" }
-        : { kind: "quoted", quote: fakeQuote(firm) as never };
+        : { kind: "quoted", quote: fakeQuote({ ...firm, attributionSuffix: overrides.firmAttributionSuffix }) as never };
     },
     cancelQuote: async (rfqId: string) => {
       state.cancels.push(rfqId);
@@ -135,7 +137,8 @@ function fakeRuntime(overrides: {
     getAllowance: async () => 0n,
     waitForReceipt: async () => ({ status: "success" as const }),
     getReceipt: async () => state.swapReceipt,
-    executeSwap: async (quote, sendFn) => {
+    executeSwap: async (quote, sendFn, opts) => {
+      state.requireAttribution = opts.requireAttribution;
       if (overrides.swapThrows) throw new Error(overrides.swapThrows);
       // The real executeSwap sends the approval then the swap through the one sendFn.
       const approvalHash = await sendFn({ to: USDT_ADDRESS, data: APPROVAL_DATA as Hex, value: "0" });
@@ -306,6 +309,7 @@ describe("processBills", () => {
     expect(state.tagged).toHaveLength(2);
     expect(state.raw).toHaveLength(1);
     expect(state.raw[0].data.toLowerCase()).toBe(SWAP_DATA.toLowerCase());
+    expect(state.requireAttribution).toBe(false); // Textile returned attributionSuffix: null.
     const payout = state.tagged.find((t) => t.to.toLowerCase() === CNGN_ADDRESS.toLowerCase());
     expect(payout).toBeDefined();
     expect(parseAttribution(payout!.data)?.codes).toContain(TAG);
@@ -320,6 +324,13 @@ describe("processBills", () => {
     expect(swapUpdate?.update.patch).toMatchObject({ status: "converting" });
     const paidUpdate = state.updates.find((u) => u.update.event?.kind === "payout");
     expect(paidUpdate?.update.patch).toMatchObject({ status: "paid" });
+  });
+
+  it("requires attribution when Textile says the firm quote includes a suffix", async () => {
+    const { rt, state } = fakeRuntime({ firmAttributionSuffix: "0x8021" });
+    const res = await processBills([fundedBill()], rt, 10);
+    expect(res.paid).toBe(1);
+    expect(state.requireAttribution).toBe(true);
   });
 
   it("force-converts at the deadline below the minimum", async () => {
