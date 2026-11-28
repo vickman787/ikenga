@@ -512,7 +512,10 @@ async function processOneBill(
     executed = await rt.executeSwap(quote, sendFn, {
       waitForReceipt: async (hash: string) => rt.waitForReceipt(hash),
       getAllowance: rt.getAllowance,
-      requireAttribution: true,
+      // Some Textile key types return a firm quote without an attribution suffix.
+      // Preserve Textile calldata byte-for-byte and enforce the tag only when
+      // Textile says it included one.
+      requireAttribution: quote.attributionSuffix != null,
     });
   } catch (err) {
     // Expired quote, reverted approval, no makers — nothing moved (or the
